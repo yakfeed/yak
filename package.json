@@ -1,0 +1,22 @@
+{
+  "name": "yak-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r exec vitest run --passWithNoTests",
+    "pack:all": "pnpm -r exec pnpm pack --pack-destination ../../packed"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "typescript-eslint": "^8.72.0"
+  }
+}

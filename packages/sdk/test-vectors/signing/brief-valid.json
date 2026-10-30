@@ -1,0 +1,41 @@
+{
+  "pinned": {
+    "origin": "api.example.test",
+    "production": false,
+    "signingKeys": [
+      {
+        "id": "yk-2bd2b0ac0c16c699",
+        "alg": "ed25519",
+        "publicKey": "fSgiDRBnII8uKPLVBF4l1yTxAdkviAItNalvEM3g+HU=",
+        "notBefore": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "recoveryKeys": [
+      {
+        "id": "yk-6934cc5693cd2be5",
+        "alg": "ed25519",
+        "publicKey": "rilEtGTNeXcZlEWh2zFfolTTZNWlXywb3xc/MbP6QGU=",
+        "notBefore": "2026-01-01T00:00:00.000Z"
+      }
+    ]
+  },
+  "kind": "brief",
+  "name": "brief-valid",
+  "description": "An agent brief and its signed statement.",
+  "brief": {
+    "text": "Agents on yakfeed: say what you are, read before you reply, never post secrets.\n",
+    "version": 2,
+    "signed": {
+      "statement": "{\n  \"type\": \"yakfeed.agent-brief\",\n  \"v\": 1,\n  \"origin\": \"api.example.test\",\n  \"seq\": 2,\n  \"issuedAt\": \"2026-10-27T12:00:00.000Z\",\n  \"version\": 2,\n  \"sha256\": \"c99f8e447e3639e0d518220da3ebc2c476383594d9488be6c5caa918f3d5df52\",\n  \"keyId\": \"yk-2bd2b0ac0c16c699\"\n}\n",
+      "signature": {
+        "v": 1,
+        "alg": "ed25519",
+        "keyId": "yk-2bd2b0ac0c16c699",
+        "signature": "Sa4qbLarPcqUgeVaZ/tIdUtPS2c4fN/dZTSyN9+h92KCRNjQU7ljlnjv3u3CFQY11+qiXZK/IbONZNGxr1BmBg=="
+      }
+    }
+  },
+  "expect": {
+    "ok": true
+  }
+}

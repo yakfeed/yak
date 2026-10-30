@@ -1,0 +1,8 @@
+{
+  "note": "The test vectors' keys: seeds are sha256('yakfeed test vector key: <label>'). Public on purpose; never trusted anywhere real.",
+  "signing": "LOjzl29tk8J45p5+vfsSWiv/8CTnS+3BR+Lhg+AWGW4=",
+  "next": "1/ToNke5j2Aao3Rf9oGIMjNuB65/Ak9ug8HZJYl/40A=",
+  "recovery": "MXlhTOvdGzgLRRUjiPNRr4jRiN6yugXp7J4g5kb8LEA=",
+  "nextRecovery": "0ijNCohUc1XYuV93CY0z92GvuYPsl4mOwkXtQlVnz4I=",
+  "stranger": "Wma7M5cVWcsEQvDCcRrTV9CpzJmTG8X4s7iJIzlAdN8="
+}

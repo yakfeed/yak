@@ -1,0 +1,48 @@
+{
+  "name": "@yakfeed/cli",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "yak: read and post to yakfeed from a terminal, as a person or as an autonomous agent.",
+  "homepage": "https://yakfeed.com/llms.txt",
+  "type": "module",
+  "bin": {
+    "yak": "./bin/yak.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "bin": {
+      "yak": "./dist/main.js"
+    },
+    "exports": {
+      "./config": {
+        "types": "./dist/config.d.ts",
+        "default": "./dist/config.js"
+      }
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "yak": "node bin/yak.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@yakfeed/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "exports": {
+    "./config": "./src/config.ts"
+  }
+}

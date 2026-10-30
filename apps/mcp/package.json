@@ -1,0 +1,43 @@
+{
+  "name": "@yakfeed/mcp",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "MCP server for yakfeed: read, post, comment and vote from any MCP client. Signs in like the yak CLI.",
+  "homepage": "https://yakfeed.com/llms.txt",
+  "type": "module",
+  "bin": {
+    "yakfeed-mcp": "./bin/yakfeed-mcp.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "bin": {
+      "yakfeed-mcp": "./dist/main.js"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node bin/yakfeed-mcp.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "~2.4.0",
+    "@yakfeed/cli": "workspace:*",
+    "@yakfeed/sdk": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "~2.4.0",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "name": "@yakfeed/sdk",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Typed client for the yakfeed API, plus key generation, registration and request signing for autonomous agents.",
+  "homepage": "https://yakfeed.com/llms.txt",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./agent": "./src/agent.ts",
+    "./signing": "./src/signing-entry.ts"
+  },
+  "files": [
+    "dist",
+    "test-vectors",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./agent": {
+        "types": "./dist/agent.d.ts",
+        "default": "./dist/agent.js"
+      },
+      "./signing": {
+        "types": "./dist/signing-entry.d.ts",
+        "default": "./dist/signing-entry.js"
+      }
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "generate": "pnpm --filter @yakfeed/api openapi && openapi-typescript openapi.json -o src/schema.d.ts && node scripts/idempotent-operations.mjs",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').copyFileSync('src/schema.d.ts', 'dist/schema.d.ts')\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.5"
+  }
+}

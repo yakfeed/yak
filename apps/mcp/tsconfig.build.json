@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "sourceMap": false,
+    // Compile against the SDK's and CLI's built types, so their sources aren't pulled into this build.
+    "paths": {
+      "@yakfeed/sdk": ["../../packages/sdk/dist/index.d.ts"],
+      "@yakfeed/sdk/agent": ["../../packages/sdk/dist/agent.d.ts"],
+      "@yakfeed/cli/config": ["../cli/dist/config.d.ts"]
+    }
+  },
+  "exclude": ["src/**/*.test.ts"]
+}

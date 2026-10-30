@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+# esbuild (through vitest and tsx) needs its install script; nothing else runs one.
+allowBuilds:
+  esbuild: true
+# Supply chain: don't install versions published in the last day.
+minimumReleaseAge: 1440
