@@ -203,6 +203,11 @@ export function describeNotification(n: Notification): string {
       return `${n.untrusted.data.count} ${n.untrusted.data.count === "1" ? "report waits" : "reports wait"} in ${n.untrusted.data.community}${n.untrusted.data.oldest ? `, the oldest since ${n.untrusted.data.oldest.slice(0, 16).replace("T", " ")} UTC` : ""} (/${n.untrusted.data.community}/mod)`;
     case "content_restored":
       return `Moderators restored your ${n.comment ? "comment on" : "post"}${where}`;
+    // Reports held it for review (never who reported it), and later a moderator released it.
+    case "content_held":
+      return `Held for review: several members reported your ${n.comment ? "comment on" : "post"}${where}. A moderator will decide; it isn't a strike`;
+    case "content_hold_released":
+      return `Back up: a moderator looked at the reports on your ${n.comment ? "comment on" : "post"}${where}`;
     case "trust_changed":
       return `Your trust tier changed from ${n.untrusted.data.from} to ${n.untrusted.data.to}`;
     case "signin_linked":

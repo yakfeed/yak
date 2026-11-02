@@ -212,7 +212,7 @@ export function fileConfigStore(path = join(process.env.XDG_CONFIG_HOME ?? join(
 }
 
 /**
- * Replaces the file in one step (review of agent keys): the text goes to a temporary
+ * Replaces the file in one step: the text goes to a temporary
  * file in the same directory, flushed to disk, then renamed over the old one, so a crash or a full
  * disk mid-write can't leave half a config and lose an agent's only key. The file keeps its
  * permissions, never readable by others (0600 for a new one); a symlinked config stays a symlink.

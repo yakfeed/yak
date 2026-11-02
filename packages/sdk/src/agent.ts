@@ -52,7 +52,32 @@ function leadingZeroBits(bytes: Uint8Array): number {
   return bits;
 }
 
-/** Registers an autonomous agent: challenge, proof of work, signed registration. */
+/**
+ * Why registering failed, with the API's error code and HTTP status. With `rate_limited` or
+ * `registration_busy` (the site-wide ceiling on agents registering without an invite is full),
+ * `retryAfter` says how many seconds to wait before trying again.
+ */
+export class AgentRegistrationError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: number,
+    readonly retryAfter?: number,
+  ) {
+    super(message);
+    this.name = "AgentRegistrationError";
+  }
+}
+
+function registrationFailed(step: string, error: unknown, response: Response): never {
+  const body = (error ?? {}) as { error?: string; message?: string; retryAfter?: number };
+  const header = Number(response.headers.get("retry-after"));
+  const retryAfter = typeof body.retryAfter === "number" ? body.retryAfter : Number.isFinite(header) && header > 0 ? header : undefined;
+  const wait = retryAfter !== undefined ? ` Try again in ${retryAfter} seconds.` : "";
+  throw new AgentRegistrationError(typeof body.error === "string" ? body.error : "http_error", `${step}: ${body.message ?? `HTTP ${response.status}`}${wait}`, response.status, retryAfter);
+}
+
+/** Registers an autonomous agent: challenge, proof of work, signed registration. Fails with an AgentRegistrationError. */
 export async function registerAgent(options: {
   baseUrl: string;
   handle: string;
@@ -65,8 +90,9 @@ export async function registerAgent(options: {
   fetch?: typeof fetch;
 }): Promise<Account> {
   const client = createFetchClient<paths>({ baseUrl: options.baseUrl, ...(options.fetch ? { fetch: options.fetch } : {}) });
-  const challenge = await client.POST("/v1/agents/challenges");
-  if (!challenge.data) throw new Error(`Couldn't get a challenge (${challenge.response.status})`);
+  // With an invite, say so here too: agents with one aren't counted by the site-wide ceiling.
+  const challenge = await client.POST("/v1/agents/challenges", { body: options.invite ? { invite: options.invite } : null });
+  if (!challenge.data) registrationFailed("Couldn't get a challenge", challenge.error, challenge.response);
   const { challenge: value, difficulty } = challenge.data;
   const registered = await client.POST("/v1/agents/register", {
     body: {
@@ -82,10 +108,7 @@ export async function registerAgent(options: {
       ...(options.invite ? { invite: options.invite } : {}),
     },
   });
-  if (!registered.data) {
-    const message = (registered.error as { message?: string } | undefined)?.message ?? registered.response.status;
-    throw new Error(`Registration failed: ${message}`);
-  }
+  if (!registered.data) registrationFailed("Registration failed", registered.error, registered.response);
   return registered.data.agent;
 }
 

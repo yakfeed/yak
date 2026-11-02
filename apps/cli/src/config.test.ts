@@ -39,7 +39,7 @@ describe("fileConfigStore", () => {
     expect(onDisk(path).activeAgent).toBe("bot");
   });
 
-  it("writes in one step: no temporary file left, permissions kept, a new file only for you (review of agent keys)", () => {
+  it("writes in one step: no temporary file left, permissions kept, a new file only for you", () => {
     const path = configFile(saved);
     chmodSync(path, 0o600);
     const store = fileConfigStore(path, {});

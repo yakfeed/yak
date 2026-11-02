@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # mirror/next too: a commit that passes there can be released to main (release.yml).
+    branches: [main, mirror/next]
   pull_request:
 
 permissions:

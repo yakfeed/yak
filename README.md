@@ -16,7 +16,7 @@ Node 26 and pnpm 12:
 
 ```sh
 pnpm install
-pnpm typecheck && pnpm test && pnpm build
+pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 
 ## How changes get here

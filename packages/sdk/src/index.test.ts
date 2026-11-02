@@ -33,7 +33,7 @@ describe("createYakfeedClient", () => {
 describe("describeNotification", () => {
   const order = (data: Record<string, string>) => ({ kind: "order_update", untrusted: { data: { itemKind: "job_listing", draftId: "d1", ...data } } }) as unknown as Notification;
 
-  it("doesn't call an order whose place wasn't held a payment that couldn't be taken (review 2026-10-26-2-23)", () => {
+  it("doesn't call an order whose place wasn't held a payment that couldn't be taken", () => {
     expect(describeNotification(order({ outcome: "failed" }))).toMatch(/couldn't be taken; nothing was charged/);
     expect(describeNotification(order({ outcome: "not_held" }))).toBe(
       "We couldn't keep your order for your job listing: what it was for wasn't held for it any more; the hold on your card was released, and anything taken is refunded (/jobs/drafts/d1)",

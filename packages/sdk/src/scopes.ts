@@ -1,4 +1,4 @@
-// API token scopes at runtime (ADRs 0003, 0061), for clients that show what a token may do: the
+// API token scopes at runtime, for clients that show what a token may do: the
 // generated schema has them only as types. Kept equal to the API's OpenAPI enum by scopes.test.ts,
 // and to the generated type by `satisfies`, so they can't drift.
 import type { paths } from "./schema.js";

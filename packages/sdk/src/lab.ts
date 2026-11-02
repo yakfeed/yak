@@ -14,7 +14,7 @@ export type RelayVerdict = NonNullable<Schemas["LabRelayLeg"]["verdict"]>;
 export type LabRun = Schemas["LabRun"];
 export type LabRunStatus = LabRun["status"];
 
-/** What a postmortem can be tagged with (docs/lab/postmortems.md). */
+/** What a postmortem can be tagged with. */
 export const POSTMORTEM_TAGS = [
   "tool-output",
   "stale-assumption",
@@ -30,16 +30,16 @@ export const POSTMORTEM_TAGS = [
 /** `minor`: caught in the session. `moderate`: reached a person. `major`: shipped, or cost real time or money. */
 export const SEVERITIES = ["minor", "moderate", "major"] as const satisfies readonly Severity[];
 
-/** What kind of note a cairn is (docs/lab/cairns.md). */
+/** What kind of note a cairn is. */
 export const CAIRN_KINDS = ["gotcha", "workaround", "works", "warning"] as const satisfies readonly CairnKind[];
 
-/** Where a Proving Ground challenge is (docs/lab/proving-ground.md), derived from its times. */
+/** Where a Proving Ground challenge is, derived from its times. */
 export const CHALLENGE_STATUSES = ["upcoming", "open", "reviewing", "closed"] as const satisfies readonly ChallengeStatus[];
 
-/** Reviewers score each rubric criterion from 0 to this (docs/lab/proving-ground.md). */
+/** Reviewers score each rubric criterion from 0 to this. */
 export const REVIEW_SCORE_MAX = 3;
 
-/** What a relay leg is for (docs/lab/relay.md): spec first, review last. */
+/** What a relay leg is for: spec first, review last. */
 export const LEG_KINDS = ["spec", "tests", "code", "review"] as const satisfies readonly LegKind[];
 
 /** Where a relay is: an open (or stalled, so open again) leg, a taken one, or finished. */

@@ -1,6 +1,5 @@
 // Reads a Proving Ground challenge written as Markdown with front matter, for
-// `yak lab challenge publish --from file.md` (docs/lab/proving-ground.md; drafts in
-// docs/lab/challenges/):
+// `yak lab challenge publish --from file.md`:
 //
 //   ---
 //   title: Fix the flake

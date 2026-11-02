@@ -1,5 +1,5 @@
 <!--
-An example of the file `yak lab postmortem write --from <file>` reads (docs/lab/postmortems.md).
+An example of the file `yak lab postmortem write --from <file>` reads.
 It shows the format only: the story is made up, so don't post it. Comments like this one are
 ignored. Severity and Tags are optional here; `--severity` and `--tag` flags win over them.
 -->

@@ -1,0 +1,89 @@
+# Stages @yakfeed/sdk, @yakfeed/cli and @yakfeed/mcp on npm.
+#
+# npm trusted publishing: npm trusts this workflow, in the `npm` environment, through GitHub's OIDC
+# token, so no npm token is stored anywhere, and each version carries provenance (a signed link to
+# the commit and run that built it). The trusted publisher may only stage: every version waits on
+# npm until a maintainer approves it with two-factor authentication, SDK first, since the CLI and
+# the MCP server pin its exact version.
+#
+# Manual only, from main. A run is a dry run unless you untick it: it builds, tests and packs, and
+# uploads the packed files with their shasums. Staging for real also needs the repository variable
+# NPM_PUBLISH_ENABLED set to true. Versions come from each package.json; a version that's already
+# live is skipped.
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Build, test and pack, but don't stage
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, test and stage
+    if: github.ref == 'refs/heads/main' && (inputs.dry-run || vars.NPM_PUBLISH_ENABLED == 'true')
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 20
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing and provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      # No dependency cache: what's published is built from a clean install.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - run: pnpm install --frozen-lockfile
+
+      # In dependency order: the CLI builds against the SDK's types, the MCP server against both.
+      - name: Build and test
+        run: |
+          pnpm --filter @yakfeed/sdk --filter @yakfeed/cli --filter @yakfeed/mcp build
+          pnpm --filter @yakfeed/sdk --filter @yakfeed/cli --filter @yakfeed/mcp test
+
+      - name: Pack
+        env:
+          PACK_ONLY: "true"
+        run: .github/publish/publish-packages.sh "$RUNNER_TEMP/packages"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-${{ github.sha }}
+          path: ${{ runner.temp }}/packages
+          if-no-files-found: error
+
+      # Checks the files against their shasums again, then stages each one with provenance.
+      - name: Stage
+        env:
+          PACKED: "true"
+          STAGE: "true"
+          PROVENANCE: "true"
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: .github/publish/publish-packages.sh "$RUNNER_TEMP/packages"
+
+      - name: What to check before approving
+        if: ${{ !cancelled() }}
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "## Staged from main at \`$SHA\`"
+            echo
+            echo "Approve on npmjs.com in this order: @yakfeed/sdk, then @yakfeed/cli, then @yakfeed/mcp."
+            echo "Before approving each, check that its provenance names commit \`$SHA\` and that its shasum is the one below."
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/packages/SHA256SUMS"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,90 @@
+# Moves main to a mirror/next commit that passed CI, once a maintainer approves.
+#
+# The mirror writes only mirror/next. This runs after CI passes on a push there, and GitHub runs
+# it from the copy on main (a workflow_run always does), so a push to mirror/next can't change it.
+# The first job writes what main would gain; the second waits in the `release` environment for a
+# maintainer's approval, and only that environment holds the release app's key. A newer run
+# cancels a waiting older one: the newest carries everything before it.
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [mirror/next]
+
+permissions: {}
+
+jobs:
+  summary:
+    name: What main would gain
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Compare main with the commit CI passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          gh api "repos/$REPO/compare/main...$HEAD_SHA" >"$RUNNER_TEMP/compare.json"
+          {
+            echo "## main would move to \`$HEAD_SHA\`"
+            echo
+            echo "[Full comparison](https://github.com/$REPO/compare/main...$HEAD_SHA)"
+            echo
+            echo "### Commits"
+            jq -r '.commits[] | "- `\(.sha[0:12])` \(.commit.message | split("\n")[0])"' "$RUNNER_TEMP/compare.json"
+            echo
+            echo "### Workflow and publish changes (read these closely)"
+            jq -r '[.files[] | select(.filename | startswith(".github/")) | "- `\(.filename)` (\(.status))"] | if length == 0 then "None." else .[] end' "$RUNNER_TEMP/compare.json"
+            echo
+            echo "### Other files"
+            jq -r '[.files[] | select(.filename | startswith(".github/") | not)] | "\(length) changed"' "$RUNNER_TEMP/compare.json"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  promote:
+    name: Move main
+    needs: summary
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 5
+    environment: release
+    permissions: {}
+    # On this job, not the workflow: a run whose jobs all skip (CI failed, or a fork's branch named
+    # mirror/next) would otherwise join the group and cancel the promotion waiting for approval.
+    concurrency:
+      group: release
+      cancel-in-progress: true
+    steps:
+      # Nothing is checked out: this job runs no code from the commit it promotes.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+      - name: Move main to the approved commit, fast-forward only
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          tip=$(gh api "repos/$REPO/git/ref/heads/mirror/next" --jq .object.sha)
+          if [ "$tip" != "$HEAD_SHA" ]; then
+            echo "::error::mirror/next moved on to $tip since CI passed on $HEAD_SHA; the newer run promotes it."
+            exit 1
+          fi
+          status=$(gh api "repos/$REPO/compare/main...$HEAD_SHA" --jq .status)
+          if [ "$status" != ahead ]; then
+            echo "::error::main isn't an ancestor of $HEAD_SHA (compare says $status); nothing moved."
+            exit 1
+          fi
+          gh api -X PATCH "repos/$REPO/git/refs/heads/main" -f sha="$HEAD_SHA" -F force=false --jq .object.sha
+          echo "main moved to \`$HEAD_SHA\`." >>"$GITHUB_STEP_SUMMARY"

@@ -9,7 +9,7 @@ Read [STANDARDS.md](STANDARDS.md) first: it's how we build, and a pull request t
 1. **A maintainer reads it, then lets CI run.** Pull requests from outside the team wait for that approval before any workflow runs.
 2. **CI runs here:** lint, typecheck, the unit tests, a build and a pack of each package.
 3. **A maintainer reviews it** against STANDARDS.md. The checks here can't cover everything: the tests that run against the real API live in yakfeed's main repository.
-4. **If it's accepted,** the maintainer applies your change in the main repository, with you credited as co-author. It's tested there against the API, then arrives here with the next mirror.
+4. **If it's accepted,** the maintainer applies your change in the main repository, with you credited as co-author. It's tested there against the API, then arrives here with the next mirror. The mirror writes the `mirror/next` branch; `main` moves to it at the next release a maintainer approves, and new npm versions are released from `main` after that.
 5. **Your pull request is then closed** with a link to the commit that carries it. It's closed, not merged, because this repository only ever takes the mirror's commits.
 
 Small, focused changes are easiest to take. For anything larger, or anything that adds a dependency, open an issue first so we can agree on the shape.

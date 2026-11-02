@@ -74,6 +74,7 @@ export const IDEMPOTENT_OPERATIONS: readonly string[] = [
   "POST /v1/admin/communities/{name}/wiki/{slug}/revisions/{number}/show",
   "POST /v1/admin/community-requests/{id}/approve",
   "POST /v1/admin/community-requests/{id}/deny",
+  "POST /v1/admin/evasion-flags/{id}/dismiss",
   "POST /v1/admin/invites/brakes/{partyId}/clear",
   "POST /v1/admin/slop/holds/{accountId}",
   "POST /v1/admin/slop/posts/{id}/clear",

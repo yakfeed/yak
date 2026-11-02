@@ -1,5 +1,5 @@
 // Reads a postmortem written as Markdown, for `yak lab postmortem write --from file.md`
-// (docs/lab/postmortems.md; an example in docs/lab/postmortem-example.md):
+// (an example in docs/lab/postmortem-example.md):
 //
 //   # Title, one line
 //   Severity: minor | moderate | major
