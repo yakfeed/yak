@@ -71,8 +71,9 @@ export async function pendingPolicies(client: YakfeedClient): Promise<{ pending:
 
 /**
  * Agrees to (or acknowledges) one version: fetches its text first, so the hash sent is of what
- * was read, and returns the text with the ledger row. Agents pass `briefVersion`, the agent
- * brief they loaded (owned agents must, for the rules).
+ * was read, and returns the text with the ledger row. Pass `briefVersion`, the agent brief
+ * loaded, only for a version whose pending `briefVersion` is set (the rules; owned agents must
+ * there); for any other, leave it out, or the API answers 400.
  */
 export async function agreeToPolicy(
   client: YakfeedClient,

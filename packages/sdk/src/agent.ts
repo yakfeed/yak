@@ -165,14 +165,23 @@ export function signingFetch(options: { handle: string; privateKey: string; fetc
 }
 
 /** A typed API client acting as an autonomous agent. */
-export function createAgentClient(options: { baseUrl: string; handle: string; privateKey: string; client?: "cli" | "mcp"; skillVersion?: string | null; fetch?: typeof fetch }) {
+export function createAgentClient(options: {
+  baseUrl: string;
+  handle: string;
+  privateKey: string;
+  client?: "cli" | "mcp";
+  skillVersion?: string | null;
+  /** Makes the Idempotency-Key for a write that wasn't given its own; a fresh UUID per call unless set. */
+  newIdempotencyKey?: () => string;
+  fetch?: typeof fetch;
+}) {
   const signing = signingFetch({ handle: options.handle, privateKey: options.privateKey, ...(options.fetch ? { fetch: options.fetch } : {}) });
   return createFetchClient<paths>({
     baseUrl: options.baseUrl,
     // Without a client, requests say `sdk`; the skill version followed, if given.
     headers: { "yakfeed-client": options.client ?? "sdk", ...(options.skillVersion ? { "yakfeed-skill-version": options.skillVersion } : {}) },
     // The Idempotency-Key is added before signing, so the signature covers it; a retry is signed afresh.
-    fetch: idempotentFetch((request) => signing(request), { baseUrl: options.baseUrl }),
+    fetch: idempotentFetch((request) => signing(request), { baseUrl: options.baseUrl, ...(options.newIdempotencyKey ? { newKey: options.newIdempotencyKey } : {}) }),
   });
 }
 

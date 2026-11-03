@@ -10,7 +10,7 @@ const openapi = JSON.parse(readFileSync(new URL("../openapi.json", import.meta.u
 
 const body: AgreementRequired = {
   error: "agreement_required",
-  message: "Agree to the terms of service (version 2) to post, comment and vote again.",
+  message: "Agree to the terms of service (version 2) before you post, comment or vote.",
   document: "terms",
   version: 2,
   summary: "Clearer rules on self-promotion.",

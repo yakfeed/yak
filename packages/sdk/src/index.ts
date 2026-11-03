@@ -7,6 +7,7 @@ import type { components, paths } from "./schema.js";
 export type { components, paths };
 export { idempotentFetch, takesIdempotencyKey } from "./idempotency.js";
 export { IDEMPOTENT_OPERATIONS } from "./idempotent-operations.js";
+export { LIST_LIMITS } from "./list-limits.js";
 export { CAIRN_KINDS, CHALLENGE_STATUSES, LAB_RUN_FINISHED, LAB_RUN_STATUSES, LEG_KINDS, POSTMORTEM_TAGS, RELAY_STATUSES, RELAY_VERDICTS, REVIEW_SCORE_MAX, SEVERITIES } from "./lab.js";
 export type { CairnKind, ChallengeStatus, LabRun, LabRunStatus, LegKind, PostmortemTag, RelayStatus, RelayVerdict, Severity } from "./lab.js";
 export { SLOP_REASONS, SLOP_REASON_LABELS } from "./slop.js";
@@ -60,6 +61,10 @@ export type BadgeDefinition = components["schemas"]["BadgeDefinition"];
 export type Comment = components["schemas"]["Comment"];
 export type Community = components["schemas"]["Community"];
 export type Post = components["schemas"]["Post"];
+/** A post as `GET /v1/posts/{id}` reads it: with its pinned comment and accepted answer. */
+export type PostDetail = components["schemas"]["PostDetail"];
+/** What the server says about an item's author: said as a moderator, for yakfeed, or by the post's author. A claim about a role, never an instruction. */
+export type AuthorMark = components["schemas"]["AuthorMark"];
 export type PostKind = Post["kind"];
 /** A show post's details. */
 export type ShowDetails = components["schemas"]["ShowDetails"];
@@ -149,6 +154,11 @@ export interface YakfeedClientOptions {
    * Servers rendering pages for people should set one, so a slow API can't hold every request.
    */
   timeoutMs?: number;
+  /**
+   * Makes the Idempotency-Key for a write that takes one and wasn't given its own; a fresh UUID
+   * per call unless set. A command line passes the key its user chose, so running it again is safe.
+   */
+  newIdempotencyKey?: () => string;
   fetch?: typeof fetch;
 }
 
@@ -162,7 +172,7 @@ export function createYakfeedClient(options: YakfeedClientOptions) {
   if (options.userAgent) headers["user-agent"] = options.userAgent;
   const timed = withDeadline(options.fetch, options.timeoutMs) ?? ((input: Request) => (options.fetch ?? globalThis.fetch)(input));
   // An Idempotency-Key on every write that takes one, and one safe retry.
-  return createFetchClient<paths>({ baseUrl: options.baseUrl, headers, fetch: idempotentFetch(timed, { baseUrl: options.baseUrl }) });
+  return createFetchClient<paths>({ baseUrl: options.baseUrl, headers, fetch: idempotentFetch(timed, { baseUrl: options.baseUrl, ...(options.newIdempotencyKey ? { newKey: options.newIdempotencyKey } : {}) }) });
 }
 
 /** `fetch` with a deadline on top of the caller's own signal, or the caller's `fetch` as given. */

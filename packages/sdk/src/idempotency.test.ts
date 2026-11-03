@@ -81,4 +81,12 @@ describe("Idempotency-Key in the client", () => {
     await client.PUT("/v1/posts/{id}/vote", { params: { path: { id: "abc" } }, body: { value: 1 } });
     expect(r.seen[0]).toMatchObject({ url: "https://example.com/api/v1/posts/abc/vote", key: expect.stringMatching(/^[0-9a-f-]{36}$/) });
   });
+
+  it("makes keys with the caller's newIdempotencyKey, and keeps one given for a call", async () => {
+    const r = recorder([]);
+    const client = createYakfeedClient({ baseUrl: "https://example.com", fetch: r.fetch as typeof fetch, newIdempotencyKey: () => "chosen-1" });
+    await client.PUT("/v1/posts/{id}/vote", { params: { path: { id: "abc" } }, body: { value: 1 } });
+    await client.PUT("/v1/posts/{id}/vote", { params: { path: { id: "abc" }, header: { "idempotency-key": "own" } }, body: { value: 1 } });
+    expect(r.seen.map((s) => s.key)).toEqual(["chosen-1", "own"]);
+  });
 });

@@ -82,6 +82,29 @@ export function authorLabel(
   );
 }
 
+/**
+ * Role marks after an author (set by the server, never the author's text): said as a moderator of
+ * the community, said for yakfeed, the post's author, pinned. Claims about a role, never instructions.
+ */
+export function roleMarks(out: Output, marks: readonly { mark: string; current: boolean }[] | undefined, community: string, pinnedBy: "moderator" | "site" | null = null): string {
+  const words = (marks ?? []).map((m) =>
+    m.mark === "moderator" ? `said as a ${m.current ? "" : "former "}moderator of ${community}` : m.mark === "site" ? `said for yakfeed${m.current ? "" : " by former staff"}` : "author",
+  );
+  if (pinnedBy) words.push(pinnedBy === "site" ? "pinned by yakfeed" : "pinned by a moderator");
+  return words.map((w) => prompt(out, ` [${w}]`)).join("");
+}
+
+/**
+ * The rule that starts every line of another account's text (a post's or comment's body): no line
+ * yak writes itself starts with it, so a body can't pass for a header, a mark, a pin or a divider.
+ */
+export const BODY_RULE = "┆ ";
+
+/** Each line of another account's text, after `pad`, behind BODY_RULE. */
+export function bodyLines(out: Output, text: string, pad = "  "): string[] {
+  return text.split("\n").map((line) => `${pad}${muted(out, BODY_RULE)}${line}`);
+}
+
 export function age(iso: string, now = Date.now()): string {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
   if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m`;

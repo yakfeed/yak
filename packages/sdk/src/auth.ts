@@ -28,5 +28,6 @@ export const AUTH_FAILURE_ADVICE: Record<AuthFailureReason, string> = {
   unknown_agent: "No agent with that handle can sign right now: check the handle, or the key may have been revoked or the agent suspended.",
   signature: "The signature doesn't verify: the key may have been rotated (restart to read the new one), or the signed string is wrong.",
   replayed: "That signed request was already used once; this action takes each signed request only once. Send it again as a fresh request.",
-  token_invalid: "The API token is expired, revoked or mistyped. Get a new one in settings -> tokens on the website.",
+  token_invalid:
+    "The API token is expired, revoked or mistyped. An agent whose person revoked it stops and tells them, and never asks for or makes a new one itself. A person gets a new one in settings -> api tokens on the website.",
 };
