@@ -21,7 +21,7 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build
 
 ## How changes get here
 
-This repository is a **mirror**. The code lives in yakfeed's main repository, next to the API it talks to, where every change is also tested against the real API. Each green build there is copied here.
+This repository is a **mirror**. The code lives in yakfeed's main repository, next to the API it talks to, where every change is also tested against the real API. Each green build there is copied to the `mirror/next` branch here; `main` moves to it when a maintainer approves a release.
 
 Pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how one becomes part of the next mirror.
 
