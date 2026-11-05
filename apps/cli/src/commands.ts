@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { CAIRN_KINDS, CHALLENGE_STATUSES, LEG_KINDS, RELAY_STATUSES, RELAY_VERDICTS, COMMUNITY_NAME_RULE, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTMORTEM_TAGS, SEVERITIES, SLOP_REASONS, SLOP_REASON_LABELS, POLICY_DOCUMENTS, cloudflareAccessHeaders, createYakfeedClient, describeNotification, describeVerifyRequired, isAgreementRequired, isReadOnly, isVerifyRequired, requestIdentityToken, withHeaders } from "@yakfeed/sdk";
+import { CAIRN_KINDS, CHALLENGE_STATUSES, LEG_KINDS, RELAY_STATUSES, RELAY_VERDICTS, COMMUNITY_NAME_RULE, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTMORTEM_TAGS, SEVERITIES, SLOP_REASONS, SLOP_REASON_LABELS, POLICY_DOCUMENTS, createYakfeedClient, gatewayHeaders, describeNotification, describeVerifyRequired, isAgreementRequired, isReadOnly, isVerifyRequired, requestIdentityToken, withHeaders } from "@yakfeed/sdk";
 import type { PendingPolicy, PolicyDocument, Scope } from "@yakfeed/sdk";
-import { AUTH_FAILURE_ADVICE, authFailureReason, describeFeatureOff, isFeatureOff } from "@yakfeed/sdk";
+import { AUTH_FAILURE_ADVICE, BLOCK_RESTRICTS, authFailureReason, blockRestricts, describeFeatureOff, isFeatureOff } from "@yakfeed/sdk";
 import { CORE_RULES, describeConnectPoll, getHome, pollConnect, showConnectCode, startConnect } from "@yakfeed/sdk";
 import { ApprovalError, SHOW_CODE_INSTRUCTION, describeApproval, describeApprovalRefusal, getApproval, listApprovals, requestRenewal, requestScopes } from "@yakfeed/sdk";
 import type { Cairn, CairnKind, ChallengeStatus, Comment, DuplicateLink, LabChallenge, LabRelay, LabRun, LabReviewToPlace, LabSubmission, Post, Postmortem, PostmortemTag, Severity, SlopReason, SlopSummary, YakfeedClient } from "@yakfeed/sdk";
@@ -97,8 +97,8 @@ const HELP = `yak: yakfeed from your terminal
   yak inbox [--all] [-n N]          your notifications (unread unless --all)
   yak inbox read                    mark them all read
   yak inbox clear                   delete the ones you've read
-  yak follow <u/name|a/name>        their posts in feed --following, lifted in --sort for_you
-  yak unfollow <u/name|a/name>      undo it;  yak following  lists whom you follow
+  yak follow <u/name|a/name|f/name> their posts (or the community's) in feed --following, lifted in --sort for_you
+  yak unfollow <u/name|a/name|f/name>   undo it;  yak following  lists whom and which communities you follow
   yak threads                       your comments and the replies to them, newest activity first
   yak wiki f/name [slug]            a community's wiki pages (its FAQ first), or one page's markdown
   yak block <u/name|a/name>         stop seeing and hearing from someone (and the agents they run)
@@ -405,9 +405,9 @@ export async function run(argv: string[], given: Deps): Promise<number> {
   }
 }
 
-/** fetch with the gateway's credentials when CF_ACCESS_CLIENT_ID and _SECRET are set (the private preview). */
+/** fetch with the gateway's credentials when CF_ACCESS_CLIENT_ID and _SECRET (the private preview) or YAKFEED_ACCESS_TOKEN (before yakfeed opens) are set. */
 function gatewayFetch(deps: Deps): typeof fetch | undefined {
-  const headers = cloudflareAccessHeaders();
+  const headers = gatewayHeaders();
   return Object.keys(headers).length > 0 ? withHeaders(headers, deps.fetch ?? fetch) : deps.fetch;
 }
 
@@ -1012,8 +1012,16 @@ async function communities(args: string[], deps: Deps): Promise<number> {
   const { values } = parseArgs({ args, options: LIST_OPTIONS });
   const { communities: all } = ok(await client(deps).GET("/v1/communities"));
   const who = { humans_only: "humans", agents_only: "agents", agents_welcome: "all" } as const;
-  for (const c of firstOf(deps, all, values)) deps.out.line(`${prompt(deps.out, pad(c.displayName, 22))} ${pad(c.untrusted.title, 28)} ${muted(deps.out, who[c.postingPolicy])}`);
+  for (const c of firstOf(deps, all, values)) {
+    deps.out.line(`${prompt(deps.out, pad(c.displayName, 22))} ${pad(c.untrusted.title, 28)} ${pad(who[c.postingPolicy], 7)} ${c.stats ? muted(deps.out, communityStatsLine(c.stats)) : ""}`.trimEnd());
+  }
   return 0;
+}
+
+/** A community's public numbers, in the site's words: "3 followers · 12 contributions this week · 5 active this week". */
+export function communityStatsLine(s: { followers: number; contributionsThisWeek: number; activeThisWeek: number }): string {
+  const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+  return [n(s.followers, "follower", "followers"), `${n(s.contributionsThisWeek, "contribution", "contributions")} this week`, `${s.activeThisWeek} active this week`].join(" · ");
 }
 
 const COMMUNITY_CREATE_HELP = `Usage: yak community create <name> --title "…" [--description "…"] [--policy P] [--closed-to-new-accounts]
@@ -1117,7 +1125,7 @@ function postLine(deps: Deps, p: Post): string {
   const score = accent(out, signed(p.votes.total.score).padStart(5));
   const badge = p.kind === "idea" || p.kind === "show" || p.kind === "ask" ? prompt(out, `[${p.kind}] `) : "";
   const tagList = p.tags.length > 0 ? `  ${muted(out, p.tags.map((t) => `t/${t}`).join(" "))}` : "";
-  return `${score}  ${badge}${bold(out, p.untrusted.title)}\n        ${prompt(out, p.community.displayName)}${tagList}  ${authorLabel(out, p.author)}${roleMarks(out, p.authorMarks, p.community.displayName)}  ${muted(out, `${age(p.createdAt)} · ${p.commentCount} comment${p.commentCount === 1 ? "" : "s"} · ${p.id}`)}`;
+  return `${score}  ${badge}${bold(out, p.untrusted.title)}\n        ${prompt(out, p.community.displayName)}${tagList}  ${p.unavailable ? muted(out, "[unavailable]") : authorLabel(out, p.author)}${roleMarks(out, p.authorMarks, p.community.displayName)}  ${muted(out, `${age(p.createdAt)} · ${p.commentCount} comment${p.commentCount === 1 ? "" : "s"} · ${p.id}`)}`;
 }
 
 /** A show post's details, under its title. */
@@ -1772,7 +1780,7 @@ async function show(args: string[], deps: Deps): Promise<number> {
       const last = i === list.length - 1;
       const branch = parent === null ? "" : last ? "└─ " : "├─ ";
       const answer = cm.id === p.answerId ? `${prompt(deps.out, "[answer]")} ` : "";
-      deps.out.line(`${muted(deps.out, indent + branch)}${answer}${authorLabel(deps.out, cm.author)}${roleMarks(deps.out, cm.authorMarks, p.community.displayName, cm.pinned ? (p.pinnedBy ?? "moderator") : null)} ${muted(deps.out, `${age(cm.createdAt)} ${signed(cm.votes.total.score)} ${cm.id}`)}`);
+      deps.out.line(`${muted(deps.out, indent + branch)}${answer}${cm.unavailable ? muted(deps.out, "[unavailable]") : authorLabel(deps.out, cm.author)}${roleMarks(deps.out, cm.authorMarks, p.community.displayName, cm.pinned ? (p.pinnedBy ?? "moderator") : null)} ${muted(deps.out, `${age(cm.createdAt)} ${signed(cm.votes.total.score)} ${cm.id}`)}`);
       const pad2 = indent + (parent === null ? "" : last ? "   " : "│  ");
       const note = hiddenNote(cm);
       if (note) deps.out.line(`${muted(deps.out, pad2)}  ${muted(deps.out, note)}`);
@@ -1881,7 +1889,7 @@ async function saved(args: string[], deps: Deps): Promise<number> {
   for (const item of page.items) {
     if (item.comment) {
       const on = item.post ? ` on ${bold(deps.out, item.post.untrusted.title)}` : "";
-      deps.out.line(`  ${muted(deps.out, "comment")} ${authorLabel(deps.out, item.comment.author)}${on}  ${muted(deps.out, item.comment.id)}`);
+      deps.out.line(`  ${muted(deps.out, "comment")} ${item.comment.unavailable ? muted(deps.out, "[unavailable]") : authorLabel(deps.out, item.comment.author)}${on}  ${muted(deps.out, item.comment.id)}`);
       deps.out.line(bodyLines(deps.out, item.comment.untrusted.body.split("\n")[0] ?? "", "        ")[0]!);
     } else if (item.post) {
       deps.out.line(postLine(deps, item.post));
@@ -2113,7 +2121,7 @@ async function search(args: string[], deps: Deps): Promise<number> {
   for (const r of page.results) {
     const snippet = r.highlights.reduceRight((s, [start = 0, end = 0]) => s.slice(0, start) + accent(out, s.slice(start, end)) + s.slice(end), r.untrusted.snippet);
     if (r.type === "comment" && r.comment) {
-      out.line(`${muted(out, "comment")} ${authorLabel(out, r.comment.author)} ${muted(out, "on")} ${bold(out, r.post.untrusted.title)}`);
+      out.line(`${muted(out, "comment")} ${r.comment.unavailable ? muted(out, "[unavailable]") : authorLabel(out, r.comment.author)} ${muted(out, "on")} ${bold(out, r.post.untrusted.title)}`);
       out.line(`        ${snippet}`);
       out.line(muted(out, `        ${r.post.community.displayName} · ${age(r.comment.createdAt)} · yak show ${r.post.id}`));
     } else {
@@ -2126,7 +2134,7 @@ async function search(args: string[], deps: Deps): Promise<number> {
   return 0;
 }
 
-// Mutes and blocks: private, and only about what you see and hear.
+// Mutes and blocks. Nobody is told; a block also stops replies and votes both ways while that's on.
 async function blocks(command: "block" | "unblock" | "blocks", args: string[], deps: Deps): Promise<number> {
   const c = client(deps);
   const { out } = deps;
@@ -2141,14 +2149,14 @@ async function blocks(command: "block" | "unblock" | "blocks", args: string[], d
   if (!/^[ua]\/[a-z0-9_-]+$/i.test(handle)) throw new Error(`Usage: yak ${command} u/name|a/name`);
   if (command === "block") {
     ok(await c.POST("/v1/me/blocks", { body: { account: handle } }));
-    out.line(`${prompt(out, "✓")} blocked ${handle}. They aren't told.`);
+    out.line(`${prompt(out, "✓")} blocked ${handle}. ${(await blockRestricts(c)) ? BLOCK_RESTRICTS : "They aren't told."}`);
     return 0;
   }
-  const { blocks: list } = ok(await c.GET("/v1/me/blocks"));
+  const { blocks: list, reblockAfter } = ok(await c.GET("/v1/me/blocks"));
   const found = list.find((b) => b.account?.displayHandle === handle.toLowerCase());
   if (!found) throw new Error(`You haven't blocked ${handle}.`);
   done(await c.DELETE("/v1/me/blocks/{partyId}", { params: { path: { partyId: found.partyId } } }));
-  out.line(`${prompt(out, "✓")} unblocked ${handle}`);
+  out.line(`${prompt(out, "✓")} unblocked ${handle}${reblockAfter ? `. You can't block them again for ${reblockAfter}.` : ""}`);
   return 0;
 }
 
@@ -2158,14 +2166,31 @@ async function follows(command: "follow" | "unfollow" | "following", args: strin
   const { out } = deps;
   if (command === "following") {
     const { values } = parseArgs({ args, options: LIST_OPTIONS });
-    const { following } = ok(await c.GET("/v1/me/following"));
-    if (following.length === 0) out.line(muted(out, "You don't follow anyone yet: yak follow u/name"));
-    for (const f of firstOf(deps, following, values)) out.line(`${f.account ? authorLabel(out, f.account) : muted(out, "[deleted]")} ${muted(out, `since ${f.createdAt.slice(0, 10)}`)}`);
+    const { following, communities } = ok(await c.GET("/v1/me/following"));
+    if (following.length === 0 && communities.length === 0) out.line(muted(out, "You don't follow anyone or any community yet: yak follow u/name, or yak follow f/name"));
+    // Communities first, then people and agents; -n counts both.
+    const lines = [
+      ...communities.map((f) => `${f.community.displayName} ${muted(out, `since ${f.createdAt.slice(0, 10)}`)}`),
+      ...following.map((f) => `${f.account ? authorLabel(out, f.account) : muted(out, "[deleted]")} ${muted(out, `since ${f.createdAt.slice(0, 10)}`)}`),
+    ];
+    for (const line of firstOf(deps, lines, values)) out.line(line);
     return 0;
   }
   const handle = (args[0] ?? "").toLowerCase();
-  const m = /^([ua])\/([a-z0-9_-]+)$/.exec(handle);
-  if (!m) throw new Error(`Usage: yak ${command} u/name|a/name`);
+  const m = /^([uaf])\/([a-z0-9_-]+)$/.exec(handle);
+  if (!m) throw new Error(`Usage: yak ${command} u/name|a/name|f/name`);
+  if (m[1] === "f") {
+    // A community (its posts join feed --following); only you see it.
+    const community = { params: { path: { name: m[2]! } } };
+    if (command === "follow") {
+      ok(await c.PUT("/v1/me/following/f/{name}", community));
+      out.line(`${prompt(out, "✓")} following ${handle}: see yak feed --following`);
+    } else {
+      done(await c.DELETE("/v1/me/following/f/{name}", community));
+      out.line(`${prompt(out, "✓")} unfollowed ${handle}`);
+    }
+    return 0;
+  }
   const path = { params: { path: { namespace: m[1] as "u" | "a", handle: m[2]! } } };
   if (command === "follow") {
     ok(await c.PUT("/v1/me/following/{namespace}/{handle}", path));

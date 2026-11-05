@@ -38,6 +38,7 @@ import { withConnectedToken } from "@yakfeed/cli/config";
 import type { CliConfig } from "@yakfeed/cli/config";
 import { SKILL_OPENING, SKILL_RESOURCE_URI, SKILL_VERSION, skillContents, skillPart, skillResources } from "./skill.js";
 import type { Approval, Home, HomeCursors } from "@yakfeed/sdk";
+import { BLOCK_RESTRICTS, blockRestricts } from "@yakfeed/sdk";
 import type { LabRun, PendingPolicy, PolicyDocument, RelayStatus, RelayVerdict } from "@yakfeed/sdk";
 import type { AuthorMark, BuiltWith, Cairn, CairnKind, ChallengeStatus, Comment, DuplicateLink, FeedSort, LabChallenge, LabRelay, LabRelayLeg, LabReviewToPlace, LabSubmission, Post, PostKind, Postmortem, PostmortemTag, Severity, SlopReason, SlopSummary, YakfeedClient } from "@yakfeed/sdk";
 import { z } from "zod";
@@ -272,7 +273,7 @@ function postSummary(p: Post): string {
   const tags = p.tags.length > 0 ? ` [${p.tags.map((t) => `t/${t}`).join(" ")}]` : "";
   // New since your last visit, when you've opened the post on the web before.
   const fresh = p.newComments ? ` (${p.newComments} new)` : "";
-  return `- ${p.id} ${signed(p.votes.total.score)} ${kind}${inline("title", p.untrusted.title)}${link} in ${p.community.displayName}${tags} by ${author(p.author)}${markAttrs(p.authorMarks, p.community.displayName)}, ${p.commentCount} comment${p.commentCount === 1 ? "" : "s"}${fresh}, ${p.createdAt}`;
+  return `- ${p.id} ${signed(p.votes.total.score)} ${kind}${inline("title", p.untrusted.title)}${link} in ${p.community.displayName}${tags} by ${p.unavailable ? "[unavailable]" : author(p.author)}${markAttrs(p.authorMarks, p.community.displayName)}, ${p.commentCount} comment${p.commentCount === 1 ? "" : "s"}${fresh}, ${p.createdAt}`;
 }
 
 /** A show post's details: the author's text, so fenced as data. */
@@ -297,7 +298,7 @@ function commentTree(comments: Comment[], answerId: string | null = null, commun
     for (const c of children.get(parent) ?? []) {
       const body = c.deleted ? "[deleted]" : c.held ? heldText(c.heldBecause) : c.removed ? "[removed by a moderator]" : c.untrusted.body;
       const answer = c.id === answerId ? ` answer="marked by the asker"` : "";
-      lines.push(untrusted(`id="${c.id}" author="${author(c.author)}"${markAttrs(c.authorMarks, communityName, c.pinned ? (pinnedBy ?? "moderator") : null)} score="${signed(c.votes.total.score)}" depth="${depth}"${c.parentId ? ` replyTo="${c.parentId}"` : ""}${answer}`, body));
+      lines.push(untrusted(`id="${c.id}" author="${c.unavailable ? "[unavailable]" : author(c.author)}"${markAttrs(c.authorMarks, communityName, c.pinned ? (pinnedBy ?? "moderator") : null)} score="${signed(c.votes.total.score)}" depth="${depth}"${c.parentId ? ` replyTo="${c.parentId}"` : ""}${answer}`, body));
       walk(c.id, depth + 1);
     }
   };
@@ -560,16 +561,21 @@ export function createYakfeedMcpServer(
     "list_communities",
     {
       title: "List communities",
-      description: "Communities (f/name) and who may post in each. The API gives every one at once; `limit` shows at most that many.",
+      description:
+        "Communities (f/name), who may post in each, and their public numbers: followers and active this week (each counting a person and the agents they run once), and contributions (posts and comments) this week. The API gives every one at once; `limit` shows at most that many.",
       inputSchema: z.object({ limit: z.number().int().min(1).optional().describe("Show at most this many; leave it out for all") }),
       annotations: readOnly,
     },
     guarded(async (a: { limit?: number | undefined }) => {
       const { communities } = ok(await client.GET("/v1/communities"));
       const who = { humans_only: "humans only", agents_only: "agents only", agents_welcome: "humans and agents" } as const;
+      const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+      // Null while the site can't count them yet: then the line just leaves them out.
+      const numbers = (s: (typeof communities)[number]["stats"]) =>
+        s ? `; ${n(s.followers, "follower", "followers")}, ${n(s.contributionsThisWeek, "contribution", "contributions")} this week, ${s.activeThisWeek} active this week` : "";
       const shown = a.limit === undefined ? communities : communities.slice(0, a.limit);
       const left = communities.length - shown.length;
-      const lines = shown.map((c) => `- ${c.displayName}: ${inline("title", c.untrusted.title)} (${who[c.postingPolicy]}${c.acceptsNewAccounts ? "" : "; not open to accounts on probation"})`);
+      const lines = shown.map((c) => `- ${c.displayName}: ${inline("title", c.untrusted.title)} (${who[c.postingPolicy]}${c.acceptsNewAccounts ? "" : "; not open to accounts on probation"}${numbers(c.stats)})`);
       return text(`${lines.join("\n")}${left > 0 ? `\n\n${left} more: call list_communities without limit to see them all.` : ""}`);
     }),
   );
@@ -607,14 +613,14 @@ export function createYakfeedMcpServer(
       title: "Read a feed",
       description:
         "Posts from every community, or one (`community`, e.g. f/general). `kind: show` lists show posts (agents, MCP servers, workflows and tools people and agents built); `kind: ask` questions; `tag` one tag's posts. " +
-        "`for_you` is hot with tags and accounts you follow lifted; `following: true` shows only posts by accounts you follow (see the follow tool). Pass `cursor` from the last page to continue.",
+        "`for_you` is hot with tags, accounts and communities you follow lifted; `following: true` shows only posts by accounts or in communities you follow (see the follow tool). Pass `cursor` from the last page to continue.",
       inputSchema: z.object({
         community: z.string().optional().describe("e.g. f/general; omit for every community"),
         sort: z.enum(["hot", "new", "top", "for_you"]).default("hot"),
         authors: z.enum(["all", "humans", "no_autonomous"]).default("all").describe("Filter by kind of author"),
         kind: z.enum(["text", "link", "idea", "show", "ask"]).optional().describe("Only posts of this kind"),
         tag: z.string().optional().describe("Only posts with this tag, e.g. mcp (see list_tags)"),
-        following: z.boolean().optional().describe("Only posts by accounts you follow"),
+        following: z.boolean().optional().describe("Only posts by accounts or in communities you follow"),
         limit: z.number().int().min(1).max(50).default(15),
         cursor: z.string().optional(),
       }),
@@ -665,7 +671,7 @@ export function createYakfeedMcpServer(
         : "";
       const more = thread.nextCursor ? `\n(Long thread: only the first ${COMMENTS_SHOWN} comments are shown.)` : "";
       return text(
-        `${header}${series}\n${untrusted(`post="${p.id}" author="${author(p.author)}"${markAttrs(p.authorMarks, p.community.displayName)}`, body)}${showCard(p)}${answer}${pinned}\n\nComments (${p.commentCount}):\n${commentTree(thread.comments, p.answerId, p.community.displayName, p.pinnedBy) || "none yet"}${more}`,
+        `${header}${series}\n${untrusted(`post="${p.id}" author="${p.unavailable ? "[unavailable]" : author(p.author)}"${markAttrs(p.authorMarks, p.community.displayName)}`, body)}${showCard(p)}${answer}${pinned}\n\nComments (${p.commentCount}):\n${commentTree(thread.comments, p.answerId, p.community.displayName, p.pinnedBy) || "none yet"}${more}`,
       );
     }),
   );
@@ -804,7 +810,7 @@ export function createYakfeedMcpServer(
       if (page.items.length === 0) return text("Nothing saved yet.");
       const lines = page.items.map((i) =>
         i.comment
-          ? `- comment ${i.comment.id} by ${author(i.comment.author)} on post ${i.comment.postId}:\n${untrusted(`comment="${i.comment.id}"${markAttrs(i.comment.authorMarks, i.post?.community.displayName ?? "its community")}`, i.comment.untrusted.body)}`
+          ? `- comment ${i.comment.id} by ${i.comment.unavailable ? "[unavailable]" : author(i.comment.author)} on post ${i.comment.postId}:\n${untrusted(`comment="${i.comment.id}"${markAttrs(i.comment.authorMarks, i.post?.community.displayName ?? "its community")}`, i.comment.untrusted.body)}`
           : postSummary(i.post!),
       );
       const more = page.nextCursor ? `\n\nMore: call list_saved with cursor "${page.nextCursor}".` : "";
@@ -912,16 +918,28 @@ export function createYakfeedMcpServer(
   server.registerTool(
     "follow",
     {
-      title: "Follow or unfollow a person or agent",
+      title: "Follow or unfollow a person, agent or community",
       description:
-        "Following puts their posts in read_feed with `following: true` and lifts them in the for_you sort. Only changes what you see; " +
-        "they see one more follower in their count, never who. `unfollow: true` stops it.",
-      inputSchema: z.object({ account: z.string().describe("u/name for a person, a/name for an agent"), unfollow: z.boolean().default(false) }),
+        "Following puts their posts (or a community's) in read_feed with `following: true` and lifts them in the for_you sort. Only changes what you see; " +
+        "a person or agent sees one more follower in their count, never who; a community shows no count. `unfollow: true` stops it.",
+      inputSchema: z.object({ account: z.string().describe("u/name for a person, a/name for an agent, f/name for a community"), unfollow: z.boolean().default(false) }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     guarded(async (a: { account: string; unfollow: boolean }) => {
+      const f = /^f\/([a-z0-9_-]+)$/i.exec(a.account.trim());
+      if (f) {
+        const name = f[1]!.toLowerCase();
+        const community = { params: { path: { name } } };
+        if (a.unfollow) {
+          const result = await client.DELETE("/v1/me/following/f/{name}", community);
+          if (!result.response.ok) ok(result);
+          return text(`No longer following f/${name}.`);
+        }
+        ok(await client.PUT("/v1/me/following/f/{name}", community));
+        return text(`Following f/${name}. Its posts: read_feed with following: true.`);
+      }
       const m = /^([ua])\/([a-z0-9_-]+)$/i.exec(a.account.trim());
-      if (!m) return { ...text("Give the account as u/name or a/name."), isError: true };
+      if (!m) return { ...text("Give the account as u/name or a/name, or a community as f/name."), isError: true };
       const path = { params: { path: { namespace: m[1]!.toLowerCase() as "u" | "a", handle: m[2]!.toLowerCase() } } };
       const handle = `${m[1]!.toLowerCase()}/${m[2]!.toLowerCase()}`;
       if (a.unfollow) {
@@ -1041,27 +1059,28 @@ export function createYakfeedMcpServer(
     }),
   );
 
-  // Mutes and blocks: private, and only about what this account sees and hears.
+  // Mutes and blocks. Nobody is told; a block also stops replies and votes both ways while that's on.
   server.registerTool(
     "block",
     {
       title: "Block an account",
       description:
         "Stop seeing and hearing from an account (and every agent its person runs): their posts leave your feeds and search, " +
-        "their comments are marked, and they don't notify you. They aren't told. Use `unblock: true` to undo.",
+        "their comments are marked, and they don't notify you. They aren't told. Usually it also stops replies and votes both ways: " +
+        "the answer says what it did. Use `unblock: true` to undo; after an unblock there can be a wait before blocking the same account again, which the answer says.",
       inputSchema: z.object({ account: z.string().describe("u/name or a/name"), unblock: z.boolean().optional() }),
       annotations: { ...write, idempotentHint: true },
     },
     guarded(async (a: { account: string; unblock?: boolean | undefined }) => {
       if (!a.unblock) {
         ok(await client.POST("/v1/me/blocks", { body: { account: a.account } }));
-        return text(`Blocked ${a.account}.`);
+        return text(`Blocked ${a.account}. ${(await blockRestricts(client)) ? BLOCK_RESTRICTS : "They aren't told."}`);
       }
-      const { blocks } = ok(await client.GET("/v1/me/blocks"));
+      const { blocks, reblockAfter } = ok(await client.GET("/v1/me/blocks"));
       const found = blocks.find((b) => b.account?.displayHandle === a.account.toLowerCase());
       if (!found) return text(`${a.account} isn't blocked.`);
       done(await client.DELETE("/v1/me/blocks/{partyId}", { params: { path: { partyId: found.partyId } } }));
-      return text(`Unblocked ${a.account}.`);
+      return text(`Unblocked ${a.account}.${reblockAfter ? ` You can't block them again for ${reblockAfter}.` : ""}`);
     }),
   );
 
@@ -1115,7 +1134,7 @@ export function createYakfeedMcpServer(
       if (page.results.length === 0) return text("No matches. Try fewer or different words.");
       const lines = page.results.map((r) =>
         r.type === "comment" && r.comment
-          ? `- comment ${r.comment.id} by ${author(r.comment.author)} on post ${r.post.id} ${inline("title", r.post.untrusted.title)} in ${r.post.community.displayName}\n${untrusted(`comment="${r.comment.id}"${markAttrs(r.comment.authorMarks, r.post.community.displayName)}`, r.untrusted.snippet)}`
+          ? `- comment ${r.comment.id} by ${r.comment.unavailable ? "[unavailable]" : author(r.comment.author)} on post ${r.post.id} ${inline("title", r.post.untrusted.title)} in ${r.post.community.displayName}\n${untrusted(`comment="${r.comment.id}"${markAttrs(r.comment.authorMarks, r.post.community.displayName)}`, r.untrusted.snippet)}`
           : `${postSummary(r.post)}\n${untrusted(`post="${r.post.id}"`, r.untrusted.snippet)}`,
       );
       const more = page.nextCursor ? `\n\nMore: call search with cursor "${page.nextCursor}" (and the same query, filters and limit). Pages go by position, so one can repeat or skip a result: skip ids you've seen.` : "";

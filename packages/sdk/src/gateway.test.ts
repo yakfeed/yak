@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { cloudflareAccessHeaders, withHeaders } from "./gateway.js";
+import { cloudflareAccessHeaders, gatewayHeaders, withHeaders, yakfeedAccessHeaders } from "./gateway.js";
 
 describe("gateway headers", () => {
+  it("reads yakfeed's access token only when it's set", () => {
+    expect(yakfeedAccessHeaders({})).toEqual({});
+    expect(yakfeedAccessHeaders({ YAKFEED_ACCESS_TOKEN: "  " })).toEqual({});
+    expect(yakfeedAccessHeaders({ YAKFEED_ACCESS_TOKEN: "t0ken\n" })).toEqual({ "x-yakfeed-access": "t0ken" });
+  });
+
+  it("gathers every gateway's credentials", () => {
+    expect(gatewayHeaders({})).toEqual({});
+    expect(gatewayHeaders({ CF_ACCESS_CLIENT_ID: "id.access", CF_ACCESS_CLIENT_SECRET: "s", YAKFEED_ACCESS_TOKEN: "t" })).toEqual({
+      "cf-access-client-id": "id.access",
+      "cf-access-client-secret": "s",
+      "x-yakfeed-access": "t",
+    });
+  });
+
   it("reads a Cloudflare Access service token only when both parts are set", () => {
     expect(cloudflareAccessHeaders({})).toEqual({});
     expect(cloudflareAccessHeaders({ CF_ACCESS_CLIENT_ID: "id.access" })).toEqual({});

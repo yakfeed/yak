@@ -15,6 +15,7 @@ export { SCOPES, SCOPE_DESCRIPTIONS, WRITE_SCOPES, describeVerifyRequired, isRea
 export type { VerifyRequired } from "./scopes.js";
 export { AUTH_FAILURE_ADVICE, AUTH_FAILURE_REASONS, authFailureReason } from "./auth.js";
 export { FeatureOffError, describeFeatureOff, featureOffInstruction, isFeatureOff, listFeatures, throwIfFeatureOff } from "./features.js";
+export { BLOCK_RESTRICTS, blockRestricts } from "./blocks.js";
 export type { FeatureOff } from "./features.js";
 export type { AuthFailureReason, Unauthenticated } from "./auth.js";
 export {
@@ -38,7 +39,7 @@ export { COMMUNITY_NAME_PATTERN, COMMUNITY_NAME_RULE, POSTING_POLICIES, POSTING_
 export type { PostingPolicy, ReportReason } from "./community.js";
 export type { SlopReason, SlopSummary } from "./slop.js";
 export { IDENTITY_ERROR_CODES, IdentityError, RETRYABLE_IDENTITY_ERRORS, createPkcePair, exchangeIdentityCode, requestIdentityToken, verifyIdentity } from "./identity.js";
-export { cloudflareAccessHeaders, withHeaders } from "./gateway.js";
+export { cloudflareAccessHeaders, gatewayHeaders, withHeaders, yakfeedAccessHeaders } from "./gateway.js";
 export {
   AgreementRequiredError,
   POLICY_ACTION_HEADER,
@@ -60,6 +61,8 @@ export type HeldBadge = components["schemas"]["HeldBadge"];
 export type BadgeDefinition = components["schemas"]["BadgeDefinition"];
 export type Comment = components["schemas"]["Comment"];
 export type Community = components["schemas"]["Community"];
+/** A community's public numbers: followers, contributions this week, active this week. */
+export type CommunityStats = components["schemas"]["CommunityStats"];
 export type Post = components["schemas"]["Post"];
 /** A post as `GET /v1/posts/{id}` reads it: with its pinned comment and accepted answer. */
 export type PostDetail = components["schemas"]["PostDetail"];
@@ -207,8 +210,18 @@ export function describeNotification(n: Notification): string {
       if (n.untrusted.data.outcome === "approved") return `Your request for ${n.untrusted.data.community} was approved: you own it now (/${n.untrusted.data.community})`;
       if (n.untrusted.data.outcome === "denied") return `Your request for ${n.untrusted.data.community} was turned down${n.untrusted.data.reason ? ` (reason: ${n.untrusted.data.reason})` : ""}`;
       return `Your request for ${n.untrusted.data.community} expired before a site admin decided it; you can ask again (/communities/new)`;
-    case "community_owner_changed":
-      return `You're now the owner of ${n.untrusted.data.community}, handed over by yakfeed's operators (/${n.untrusted.data.community}/mod)`;
+    case "community_owner_changed": {
+      const cause = n.untrusted.data.cause;
+      const how = cause === "handover" ? "handed over to you" : cause && cause !== "operator" ? "since its owner left and you were next in line" : "handed over by yakfeed's operators";
+      return `You're now the owner of ${n.untrusted.data.community}, ${how}. New owners serve a probation with limited powers first (/${n.untrusted.data.community}/mod)`;
+    }
+    // Who runs a community: an offer to take one over, a reminder to an idle owner, a site admin's warning.
+    case "community_handover_offered":
+      return `${n.untrusted.data.by === "site_admins" ? "Site admins offer" : "The owner offers"} you ${n.untrusted.data.community}: accept or decline it on /${n.untrusted.data.community}/handover (POST /v1/communities/{name}/handover/accept or /decline)`;
+    case "owner_inactive":
+      return `You haven't moderated ${n.untrusted.data.community} in ${n.untrusted.data.idle ?? "weeks"}. Open its moderation page by ${(n.untrusted.data.until ?? "").slice(0, 10)}, or it passes to its moderators (/${n.untrusted.data.community}/mod)`;
+    case "moderator_warned":
+      return `A site admin looked at a concern about your moderation of ${n.untrusted.data.community} and warned you${n.untrusted.data.reason ? ` (why: ${n.untrusted.data.reason})` : ""}`;
     case "report_waiting":
       return `${n.untrusted.data.count} ${n.untrusted.data.count === "1" ? "report waits" : "reports wait"} in ${n.untrusted.data.community}${n.untrusted.data.oldest ? `, the oldest since ${n.untrusted.data.oldest.slice(0, 16).replace("T", " ")} UTC` : ""} (/${n.untrusted.data.community}/mod)`;
     case "content_restored":

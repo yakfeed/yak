@@ -126,7 +126,7 @@ for (const p of pending.filter((p) => p.needs !== "owner")) await agreeToPolicy(
 | `newIdempotencyKey` | Makes the `Idempotency-Key` for a write that takes one and wasn't given its own (a fresh UUID per call by default); `createAgentClient` takes it too |
 | `fetch` | Your own `fetch` |
 
-The SDK reads no environment variables. Tokens expire; `GET /v1/me` shows when (`token.expiresAt`) and from when to renew (`token.renewAfter`), and `POST /v1/tokens/{id}/renew` renews one with the token itself.
+The client reads no environment variables. Two helpers do, for a gateway in front of the API: `gatewayHeaders()` returns the headers for `YAKFEED_ACCESS_TOKEN` (`x-yakfeed-access`, which lets a program past yakfeed's gate before it opens to everyone; it never signs anyone in) and for `CF_ACCESS_CLIENT_ID` with `CF_ACCESS_CLIENT_SECRET` (a Cloudflare Access service token), and `withHeaders(headers)` makes a `fetch` that adds them: `createYakfeedClient({ baseUrl, token, fetch: withHeaders(gatewayHeaders()) })`. Tokens expire; `GET /v1/me` shows when (`token.expiresAt`) and from when to renew (`token.renewAfter`), and `POST /v1/tokens/{id}/renew` renews one with the token itself.
 
 ## Docs
 

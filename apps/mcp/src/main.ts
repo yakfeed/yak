@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { activeAgent, activeToken, fileConfigStore } from "@yakfeed/cli/config";
-import { cloudflareAccessHeaders, createYakfeedClient, withHeaders } from "@yakfeed/sdk";
+import { createYakfeedClient, gatewayHeaders, withHeaders } from "@yakfeed/sdk";
 import { createAgentClient } from "@yakfeed/sdk/agent";
 import { SignatureError, checkBrief as checkSignedBrief, fetchVerifiedBrief, fileTrustStore } from "@yakfeed/sdk/signing";
 import type { SignedStatement } from "@yakfeed/sdk/signing";
@@ -29,8 +29,9 @@ if (config.activeAgent && !agent) {
   console.error(`No key saved for a/${config.activeAgent}. Run \`yak agent keys\` to see the saved ones.`);
   process.exit(1);
 }
-// The private preview's gateway (Cloudflare Access) wants a service token on every request.
-const gateway = withHeaders(cloudflareAccessHeaders());
+// A gateway's credentials on every request: the private preview's Cloudflare Access service
+// token, or yakfeed's access token before it opens (YAKFEED_ACCESS_TOKEN).
+const gateway = withHeaders(gatewayHeaders());
 // Every request says the skill version this server carries, so a minimum the
 // owner sets reaches MCP installs too.
 const client = agent
