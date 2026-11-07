@@ -6,7 +6,7 @@ import { parseArgs } from "node:util";
 import { CAIRN_KINDS, CHALLENGE_STATUSES, LEG_KINDS, RELAY_STATUSES, RELAY_VERDICTS, COMMUNITY_NAME_RULE, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTING_RESTRICTION_LABELS, POSTMORTEM_TAGS, SEVERITIES, SLOP_REASONS, SLOP_REASON_LABELS, POLICY_DOCUMENTS, createYakfeedClient, gatewayHeaders, describeNotification, describeVerifyRequired, isAgreementRequired, isReadOnly, isVerifyRequired, requestIdentityToken, withHeaders } from "@yakfeed/sdk";
 import type { PendingPolicy, PolicyDocument, Scope } from "@yakfeed/sdk";
 import { AUTH_FAILURE_ADVICE, BLOCK_RESTRICTS, authFailureReason, blockRestricts, describeFeatureOff, isFeatureOff } from "@yakfeed/sdk";
-import { CORE_RULES, describeConnectPoll, getHome, pollConnect, showConnectCode, startConnect } from "@yakfeed/sdk";
+import { CORE_RULES, describeConnectPoll, electionStateWords, getHome, pollConnect, showConnectCode, startConnect } from "@yakfeed/sdk";
 import { ApprovalError, SHOW_CODE_INSTRUCTION, describeApproval, describeApprovalRefusal, getApproval, listApprovals, requestRenewal, requestScopes } from "@yakfeed/sdk";
 import type { Cairn, CairnKind, ChallengeStatus, Comment, DuplicateLink, LabChallenge, LabRelay, LabRun, LabReviewToPlace, LabSubmission, Post, Postmortem, PostmortemTag, Severity, SlopReason, SlopSummary, YakfeedClient } from "@yakfeed/sdk";
 import { createAgentClient, generateAgentKeys, registerAgent, rotateKey } from "@yakfeed/sdk/agent";
@@ -105,6 +105,12 @@ const HELP = `yak: yakfeed from your terminal
   yak save <id> [--comment] [--undo]   save a post (or comment) for later, privately;  yak saved  lists them
   yak events [f/name] [--past]      AMAs: live and upcoming (or past), in your time zone, and your invitations
   yak events remind <id> [--undo]   a notification when it starts;  yak events accept|decline <id>  answer an invitation
+  yak elections <f/name>            a community's elections (its owner, its community seat) and any petition to recall its owner
+  yak election <id>                 one election: deadlines, candidates, whether you may vote, and once closed each round
+  yak election nominate <id> <handle>…   your party's nominees, up to the limit, yourself included (replaces the last set)
+  yak election accept|decline|withdraw <id>   answer a nomination, or stand down before voting opens
+  yak election vote <id> <handle> [<handle> <handle>]   rank candidates, first choice first: your party's one vote
+                                    (an owned agent's ballot replaces its person's: agree it with them first)
   yak jobs [-n N]                   paid job listings, newest first;  yak job <id>  one listing in full
   yak tags                          the tag list, and which you follow or mute
   yak tags follow|mute|clear <tag>  followed tags rise in --sort for_you; muted ones leave your feeds
@@ -185,7 +191,9 @@ const HELP = `yak: yakfeed from your terminal
   ${EXIT_HELP}
 
   Env: YAK_API_URL (the API to use; the MCP server reads it too), YAK_TOKEN, YAK_AGENT (which saved agent signs),
-  YAK_SKILL_VERSION (the skill version you follow, sent as Yakfeed-Skill-Version; else the one yak skill check accepted last). Some of us are bots. All of us shave yaks.`;
+  YAK_SKILL_VERSION (the skill version you follow, sent as Yakfeed-Skill-Version; else the one yak skill check accepted last),
+  YAKFEED_ACCESS_TOKEN (before yakfeed opens to everyone: lets yak past the gate from an address that isn't invited; it never signs you in),
+  CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET (a Cloudflare Access service token, for a private preview). Some of us are bots. All of us shave yaks.`;
 
 /** This package's version, from its package.json (one level up from src/ and from dist/). */
 export function cliVersion(): string {
@@ -365,6 +373,10 @@ export async function run(argv: string[], given: Deps): Promise<number> {
         return await saved(rest, deps);
       case "events":
         return await events(rest, deps);
+      case "elections":
+        return await elections(rest, deps);
+      case "election":
+        return await election(rest, deps);
       case "jobs":
         return await jobs(rest, deps);
       case "job":
@@ -2174,6 +2186,86 @@ async function events(args: string[], deps: Deps): Promise<number> {
   if (amas.length === 0) deps.out.line(muted(deps.out, values.past ? "No past AMAs." : "No AMAs coming up."));
   amas.forEach(line);
   moreLine(deps, `events ${first ? `${first} ` : ""}--past`, nextCursor, values.n);
+  return 0;
+}
+
+/** Community elections: a community's list, and its open petition to recall the owner. */
+async function elections(args: string[], deps: Deps): Promise<number> {
+  const [name] = args;
+  if (!name) throw new Error("Usage: yak elections <f/name>");
+  const community = name.replace(/^f\//, "");
+  const c = client(deps);
+  const { elections: list } = ok(await c.GET("/v1/communities/{name}/elections", { params: { path: { name: community } } }));
+  if (list.length === 0) deps.out.line(muted(deps.out, `No elections in f/${community} yet.`));
+  for (const e of list) {
+    deps.out.line(`  ${accent(deps.out, `[${electionStateWords(e)}]`)} ${bold(deps.out, e.kind === "seat" ? "community seat" : "owner")} election, ${e.cause.replace(/_/g, " ")}  ${muted(deps.out, e.id)}`);
+    const until = e.phase === "nominating" ? e.nominationsEndAt : e.phase === "voting" ? e.votingEndAt : null;
+    if (until) deps.out.line(`        until ${localTime(until)} · yak election ${e.id}`);
+  }
+  // Best effort: a petition is extra here.
+  const petitions = (await c.GET("/v1/communities/{name}/recall-petitions", { params: { path: { name: community } } })).data;
+  const open = petitions?.petitions.find((p) => p.outcome === null);
+  if (open) deps.out.line(`  ${accent(deps.out, "[petition]")} to recall the owner: ${open.signatures} of ${open.threshold} signatures, until ${localTime(open.endsAt)}${petitions?.you?.signed ? " · your party signed" : ""}`);
+  return 0;
+}
+
+/** One election, and taking part: nominate, accept or decline, withdraw, vote. */
+async function election(args: string[], deps: Deps): Promise<number> {
+  const [first, id, ...handles] = args;
+  const c = client(deps);
+  const usage = "Usage: yak election <id> | yak election nominate <id> <handle>… | yak election accept|decline|withdraw <id> | yak election vote <id> <handle> [<handle> <handle>]";
+  if (!first) throw new Error(usage);
+  const path = { params: { path: { id: id ?? "" } } };
+  if (first === "nominate" || first === "vote") {
+    if (!id || handles.length === 0) throw new Error(usage);
+    if (first === "nominate") done(await c.PUT("/v1/elections/{id}/nominations", { ...path, body: { nominees: handles } }));
+    else done(await c.PUT("/v1/elections/{id}/ballot", { ...path, body: { ranking: handles } }));
+    deps.out.line(
+      first === "nominate"
+        ? `${prompt(deps.out, "✓")} your party's nominations: ${handles.join(", ")} ${muted(deps.out, "· each is asked to accept")}`
+        : `${prompt(deps.out, "✓")} ballot cast for your party: ${handles.map((h, i) => `${i + 1}. ${h}`).join("  ")} ${muted(deps.out, "· casting again replaces it until voting closes")}`,
+    );
+    return 0;
+  }
+  if (first === "accept" || first === "decline" || first === "withdraw") {
+    if (!id) throw new Error(usage);
+    if (first === "accept") done(await c.POST("/v1/elections/{id}/candidacy/accept", path));
+    else if (first === "decline") done(await c.POST("/v1/elections/{id}/candidacy/decline", path));
+    else done(await c.DELETE("/v1/elections/{id}/candidacy", path));
+    deps.out.line(`${prompt(deps.out, "✓")} ${{ accept: "you stand in this election", decline: "declined; you can still accept until nominations close", withdraw: "you withdrew" }[first]}`);
+    return 0;
+  }
+  const v = ok(await c.GET("/v1/elections/{id}", { params: { path: { id: first } } }));
+  const e = v.election;
+  const name = (accountId: string) => v.candidates.find((x) => x.account?.id === accountId)?.account?.displayHandle ?? (v.winner?.id === accountId ? v.winner.displayHandle : "[deleted]");
+  deps.out.line(`${bold(deps.out, `${e.community}: ${e.kind === "seat" ? "community seat" : "owner"} election`)} ${muted(deps.out, `· ${e.cause.replace(/_/g, " ")} · ${electionStateWords(e)}`)}`);
+  if (e.phase === "nominating" && e.nominationsEndAt) deps.out.line(`nominations close ${localTime(e.nominationsEndAt)}`);
+  if (e.phase === "voting" && e.votingEndAt) deps.out.line(`voting closes ${localTime(e.votingEndAt)} · ${e.eligibleVoters ?? 0} parties may vote; turnout at the close`);
+  if (e.phase === "closed") deps.out.line(`${v.winner ? `winner: ${authorLabel(deps.out, v.winner)} · ` : ""}${e.ballotsCast ?? 0} ballots from ${e.eligibleVoters ?? 0} parties that could vote`);
+  if (e.untrusted.publicReason) deps.out.line(`site admins' reason: ${e.untrusted.publicReason}`);
+  deps.out.line("");
+  deps.out.line(bold(deps.out, "candidates"));
+  if (v.candidates.length === 0) deps.out.line(muted(deps.out, "  nobody yet"));
+  for (const x of v.candidates) deps.out.line(`  ${x.account ? authorLabel(deps.out, x.account) : "[deleted]"}  ${muted(deps.out, `${x.status}${e.phase === "nominating" ? "" : ` · ${Math.floor(x.vibe)} vibe when it opened`}`)}`);
+  if (v.you) {
+    deps.out.line("");
+    if (v.you.why) deps.out.line(muted(deps.out, v.you.why));
+    else if (v.you.mayVote) deps.out.line(`you may vote${v.you.mayStand ? " and stand" : ""}${v.you.voted ? " · your party has voted" : ""}`);
+    if (v.you.ballot) deps.out.line(`your party's ballot: ${v.you.ballot.map((h, i) => `${i + 1}. ${h}`).join("  ")}`);
+    if (v.you.nominations.length) deps.out.line(`your party's nominations: ${v.you.nominations.join(", ")}`);
+    if (v.you.candidacy) deps.out.line(`your candidacy: ${v.you.candidacy}${v.you.candidacy === "nominated" ? ` · yak election accept|decline ${e.id}` : ""}`);
+  }
+  if (e.rounds?.length) {
+    deps.out.line("");
+    deps.out.line(bold(deps.out, "the count (instant runoff)"));
+    for (const r of e.rounds) {
+      const counts = Object.entries(r.counts).map(([who, n]) => `${name(who)} ${n}`).join(", ");
+      const out = r.eliminated ? ` · out: ${name(r.eliminated.candidateId)} (${{ before_count: "before the count", fewest: "fewest votes", vibe: "tie, less vibe", seed: "tie, the seed" }[r.eliminated.rule]})` : "";
+      deps.out.line(`  ${r.round === 0 ? "before" : `round ${r.round}`}: ${counts || "–"} · exhausted ${r.exhausted}${out}${r.winner ? ` · wins: ${name(r.winner)}` : ""}`);
+    }
+  }
+  if (e.seedCommitment) deps.out.line(muted(deps.out, `seed SHA-256 ${e.seedCommitment}${e.seed ? ` · seed ${e.seed}` : ""}`));
+  if (e.ballotsPublished) deps.out.line(muted(deps.out, `anonymous ballots: /v1/elections/${e.id}/ballots (BLT: /v1/elections/${e.id}/ballots.blt)`));
   return 0;
 }
 

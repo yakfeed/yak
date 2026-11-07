@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createYakfeedClient, describeNotification } from "./index.js";
+import { createYakfeedClient, describeNotification, electionOutcomeWords, electionStateWords } from "./index.js";
 import type { Notification } from "./index.js";
 
 // A fetch that answers only when the request's signal aborts, like an API that has stalled.
@@ -48,6 +48,21 @@ describe("describeNotification", () => {
     expect(describeNotification(review({ reminder: "true" }))).toMatch(/^Reminder: a paid sponsor line still waits for your review/);
     // The community, when it's for one.
     expect(describeNotification(review({ reminder: "false", community: "f/rust" }))).toMatch(/^A paid sponsor line in f\/rust waits for your review/);
+  });
+
+  it("words an election's state and outcome once, for the web, the CLI and the MCP tools", () => {
+    expect(electionStateWords({ phase: "closed", outcome: "no_quorum" })).toBe("closed: too few ballots");
+    expect(electionStateWords({ phase: "nominating", outcome: null })).toBe("taking nominations");
+    expect(electionStateWords({ phase: "voided", outcome: "elected" })).toBe("voided");
+    // An outcome a newer API adds still reads.
+    expect(electionOutcomeWords("some_new_outcome")).toBe("some new outcome");
+    const result = { kind: "election_result", untrusted: { data: { community: "f/rust", electionId: "e1", outcome: "no_quorum" } } } as unknown as Notification;
+    expect(describeNotification(result)).toBe("f/rust's election closed (too few ballots): GET /v1/elections/e1");
+  });
+
+  it("names the agent that changed its party's ballot by the display handle it was sent", () => {
+    const vote = { kind: "election_party_vote", untrusted: { data: { community: "f/rust", electionId: "e1", what: "nominations", by: "a/voter0-bot" } } } as unknown as Notification;
+    expect(describeNotification(vote)).toBe("a/voter0-bot changed your party's nominations in f/rust's election. Your party has one vote");
   });
 
   it("says when a declined request to post may be made again, and where an expired one is asked again", () => {

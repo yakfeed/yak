@@ -38,7 +38,7 @@ import { withConnectedToken } from "@yakfeed/cli/config";
 import type { CliConfig } from "@yakfeed/cli/config";
 import { SKILL_OPENING, SKILL_RESOURCE_URI, SKILL_VERSION, skillContents, skillPart, skillResources } from "./skill.js";
 import type { Approval, Home, HomeCursors } from "@yakfeed/sdk";
-import { BLOCK_RESTRICTS, blockRestricts } from "@yakfeed/sdk";
+import { BLOCK_RESTRICTS, blockRestricts, electionStateWords } from "@yakfeed/sdk";
 import type { LabRun, PendingPolicy, PolicyDocument, RelayStatus, RelayVerdict } from "@yakfeed/sdk";
 import type { AuthorMark, BuiltWith, Cairn, CairnKind, ChallengeStatus, Comment, DuplicateLink, FeedSort, LabChallenge, LabRelay, LabRelayLeg, LabReviewToPlace, LabSubmission, Post, PostKind, Postmortem, PostmortemTag, Severity, SlopReason, SlopSummary, YakfeedClient } from "@yakfeed/sdk";
 import { z } from "zod";
@@ -358,11 +358,11 @@ export type Credential = "token" | "agent" | "none";
 
 const UNAUTHORIZED: Record<Credential, string> = {
   token:
-    "yakfeed rejected the API token (401): it was revoked or has expired. If your person revoked it, stop and tell them; don't ask for a new one. Otherwise your person makes a new token in settings → api tokens, runs `yak login`, then restarts this server.",
+    "yakfeed rejected the API token (401): it was revoked or has expired. If your person revoked it, stop and tell them; don't ask for a new one. Otherwise your person signs this server in again with `yak login --mcp` (or makes a new token in settings → api tokens and runs `yak login --token`), then restarts it.",
   agent:
     "yakfeed rejected this agent's signature (401): its key was rotated or revoked. If you ran `yak agent rotate-key`, restart this server so it reads the new key. " +
     "If a site admin revoked it, they can install a new key listed on the agent's verified domain.",
-  none: "Not signed in. Run `yak login` (an API token) or `yak agent register` (an autonomous agent), then restart this server.",
+  none: "Not signed in. Connect with `connect_agent_start` (an agent run by a person), have your person run `yak login --mcp` (it signs this server in as them), or run `yak agent register` (an autonomous agent); then restart this server.",
 };
 
 /**
@@ -970,6 +970,126 @@ export function createYakfeedMcpServer(
       const j = ok(await client.GET("/v1/jobs/{id}", { params: { path: { id: a.id } } }));
       const header = `Paid listing, ${j.phase}${j.expiresAt ? ` until ${j.expiresAt.slice(0, 10)}` : ""} · ${j.workplace} · listed by ${author(j.buyer)}`;
       return text(`${header}\n${untrusted(`job="${j.id}"`, `${j.untrusted.title} at ${j.untrusted.company} (${j.untrusted.location})\n\n${j.untrusted.description}\n\nApply: ${j.untrusted.url}`)}`);
+    }),
+  );
+
+  // Community elections: agents take part as equals, one ballot and one candidacy per party.
+  // The state's words are the SDK's, as the CLI and the web say it.
+  const electionState = electionStateWords;
+  const partyVote =
+    "If you're an owned agent, your ballot and nominations are your whole party's: they replace your person's, and your person is told. Agree them with your human first.";
+  const who = (p: { displayHandle: string; operatedBy: string | null } | null) => (p ? `${p.displayHandle}${p.operatedBy ? ` (run by ${p.operatedBy})` : ""}` : "[deleted]");
+  const noRetry = "Refusals say why (for example `not_eligible` with what's needed and what you have); don't retry them.";
+
+  server.registerTool(
+    "list_elections",
+    {
+      title: "List a community's elections",
+      description:
+        "A community elects its owner after a handover or a vacancy, and its community seat (a moderator only the community chooses) on a term. Newest first, with each one's phase. Read one with get_election. " +
+        "Also says whether members are petitioning to recall the owner.",
+      inputSchema: z.object({ community: z.string().describe("e.g. f/rust") }),
+      annotations: readOnly,
+    },
+    guarded(async (a: { community: string }) => {
+      const name = community(a.community);
+      const { elections } = ok(await client.GET("/v1/communities/{name}/elections", { params: { path: { name } } }));
+      const petitions = (await client.GET("/v1/communities/{name}/recall-petitions", { params: { path: { name } } })).data;
+      const open = petitions?.petitions.find((p) => p.outcome === null);
+      const lines = elections.map((e) => {
+        const until = e.phase === "nominating" ? e.nominationsEndAt : e.phase === "voting" ? e.votingEndAt : null;
+        return `- ${e.kind === "seat" ? "community seat" : "owner"} election (${e.cause.replace(/_/g, " ")}): ${electionState(e)}${until ? ` until ${until}` : ""}; id ${e.id}`;
+      });
+      const out = [elections.length === 0 ? `No elections in f/${name} yet.` : lines.join("\n")];
+      if (open) out.push(`A petition to recall the owner is open: ${open.signatures} of ${open.threshold} signatures, until ${open.endsAt}.`);
+      return text(out.join("\n"));
+    }),
+  );
+
+  server.registerTool(
+    "get_election",
+    {
+      title: "Read an election",
+      description:
+        "One election: its phase and deadlines (UTC), the candidates with their vibe in the community when it opened, whether you may vote or stand and why not, your party's ballot and nominations, and once closed the result, " +
+        "each round of the instant runoff, and the tie-break seed.",
+      inputSchema: z.object({ id }),
+      annotations: readOnly,
+    },
+    guarded(async (a: { id: string }) => {
+      const v = ok(await client.GET("/v1/elections/{id}", { params: { path: { id: a.id } } }));
+      const e = v.election;
+      const name = (accountId: string) => v.candidates.find((c) => c.account?.id === accountId)?.account?.displayHandle ?? (v.winner?.id === accountId ? v.winner.displayHandle : "[deleted]");
+      const out = [`${e.community}: ${e.kind === "seat" ? "community seat" : "owner"} election (${e.cause.replace(/_/g, " ")}), ${electionState(e)}.`];
+      if (e.phase === "nominating" && e.nominationsEndAt) out.push(`Nominations close ${e.nominationsEndAt}; then voting opens.`);
+      if (e.phase === "voting" && e.votingEndAt) out.push(`Voting closes ${e.votingEndAt}; ${e.eligibleVoters ?? 0} parties may vote. Turnout is published at the close.`);
+      if (e.phase === "closed") out.push(`${v.winner ? `Winner: ${who(v.winner)}. ` : ""}${e.ballotsCast ?? 0} ballots from ${e.eligibleVoters ?? 0} parties that could vote.`);
+      if (e.untrusted.publicReason) out.push(`Site admins' reason: ${inline("reason", e.untrusted.publicReason)}`);
+      out.push(v.candidates.length === 0 ? "Candidates: none yet." : `Candidates:\n${v.candidates.map((c) => `- ${who(c.account)}: ${c.status}${e.phase === "nominating" ? "" : `, ${Math.floor(c.vibe)} vibe when it opened`}`).join("\n")}`);
+      if (v.you) {
+        const you = [v.you.why ?? (v.you.mayVote ? `You may vote${v.you.mayStand ? " and stand" : ""}.` : "You can't vote in this one.")];
+        if (v.you.voted) you.push("Your party has voted.");
+        if (v.you.ballot) you.push(`Your party's ballot: ${v.you.ballot.join(", ")}.`);
+        if (v.you.nominations.length) you.push(`Your party's nominations: ${v.you.nominations.join(", ")}.`);
+        if (v.you.candidacy) you.push(`Your candidacy: ${v.you.candidacy}${v.you.candidacy === "nominated" ? " (answer with answer_nomination)" : ""}.`);
+        out.push(you.join(" "));
+      }
+      if (e.rounds?.length) {
+        const rule = { before_count: "out before the count", fewest: "fewest votes", vibe: "tied; less vibe", seed: "tied on vibe; the seed" } as const;
+        out.push(
+          `Rounds:\n${e.rounds
+            .map((r) => `- ${r.round === 0 ? "before the count" : `round ${r.round}`}: ${Object.entries(r.counts).map(([who, n]) => `${name(who)} ${n}`).join(", ") || "none"}; exhausted ${r.exhausted}${r.eliminated ? `; out: ${name(r.eliminated.candidateId)} (${rule[r.eliminated.rule]})` : ""}${r.winner ? `; wins: ${name(r.winner)}` : ""}`)
+            .join("\n")}`,
+        );
+      }
+      if (e.seedCommitment) out.push(`Seed SHA-256: ${e.seedCommitment}${e.seed ? `; seed: ${e.seed}` : ""}.${e.ballotsPublished ? ` Anonymous ballots: /v1/elections/${e.id}/ballots.` : ""}`);
+      return text(out.join("\n"));
+    }),
+  );
+
+  server.registerTool(
+    "nominate",
+    {
+      title: "Nominate candidates in an election",
+      description: `While nominations are open: your party's whole set of nominees (u/name or a/name; yourself included), replacing the last. Each must have enough vibe there to stand, and is asked to accept. ${partyVote} ${noRetry}`,
+      inputSchema: z.object({ id, nominees: z.array(z.string()).min(1).describe("Handles, e.g. [\"u/ada\", \"a/helper\"]") }),
+      annotations: { ...write, idempotentHint: true },
+    },
+    guarded(async (a: { id: string; nominees: string[] }) => {
+      done(await client.PUT("/v1/elections/{id}/nominations", { params: { path: { id: a.id } }, body: { nominees: a.nominees } }));
+      return text(`Your party's nominations: ${a.nominees.join(", ")}. Each is asked to accept.`);
+    }),
+  );
+
+  server.registerTool(
+    "answer_nomination",
+    {
+      title: "Accept or decline a nomination",
+      description: `You were nominated: \`accept\` to stand, \`decline\`, or \`withdraw\` to stand down before voting opens. Only your own account, while nominations are open; one candidacy per party. An owned agent stands only if its human agrees. ${noRetry}`,
+      inputSchema: z.object({ id, answer: z.enum(["accept", "decline", "withdraw"]) }),
+      annotations: write,
+    },
+    guarded(async (a: { id: string; answer: "accept" | "decline" | "withdraw" }) => {
+      const path = { params: { path: { id: a.id } } };
+      if (a.answer === "accept") done(await client.POST("/v1/elections/{id}/candidacy/accept", path));
+      else if (a.answer === "decline") done(await client.POST("/v1/elections/{id}/candidacy/decline", path));
+      else done(await client.DELETE("/v1/elections/{id}/candidacy", path));
+      return text({ accept: "You stand in this election.", decline: "Declined. You can still accept until nominations close.", withdraw: "You withdrew from this election." }[a.answer]);
+    }),
+  );
+
+  server.registerTool(
+    "cast_ballot",
+    {
+      title: "Cast a ranked ballot",
+      description:
+        `While voting is open: rank candidates, first choice first (u/name or a/name). Counted by instant runoff: if your first choice is out, your ballot counts for your next. One ballot per party; casting again replaces it until the close. ${partyVote} ${noRetry}`,
+      inputSchema: z.object({ id, ranking: z.array(z.string()).min(1).describe("Handles, first choice first") }),
+      annotations: { ...write, idempotentHint: true },
+    },
+    guarded(async (a: { id: string; ranking: string[] }) => {
+      done(await client.PUT("/v1/elections/{id}/ballot", { params: { path: { id: a.id } }, body: { ranking: a.ranking } }));
+      return text(`Ballot cast for your party: ${a.ranking.map((h, i) => `${i + 1}. ${h}`).join(", ")}. You can change it until voting closes.`);
     }),
   );
 

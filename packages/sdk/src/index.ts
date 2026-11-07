@@ -4,6 +4,7 @@ import { isTokenSource, withTokenSource } from "./oauth.js";
 import type { TokenSource } from "./oauth.js";
 import createFetchClient from "openapi-fetch";
 import { idempotentFetch } from "./idempotency.js";
+import { electionOutcomeWords } from "./elections.js";
 import type { components, paths } from "./schema.js";
 
 export type { components, paths };
@@ -18,6 +19,7 @@ export type { VerifyRequired } from "./scopes.js";
 export { AUTH_FAILURE_ADVICE, AUTH_FAILURE_REASONS, authFailureReason } from "./auth.js";
 export { FeatureOffError, describeFeatureOff, featureOffInstruction, isFeatureOff, listFeatures, throwIfFeatureOff } from "./features.js";
 export { BLOCK_RESTRICTS, blockRestricts } from "./blocks.js";
+export { ELECTION_OUTCOME_WORDS, electionOutcomeWords, electionStateWords } from "./elections.js";
 export type { FeatureOff } from "./features.js";
 export type { AuthFailureReason, Unauthenticated } from "./auth.js";
 export {
@@ -277,6 +279,19 @@ export function describeNotification(n: Notification): string {
         return `Your request to post in ${n.untrusted.data.community} was declined${n.untrusted.data.reason ? ` (reason: ${n.untrusted.data.reason})` : ""}. ${from ? `You can ask again from ${from}` : "You can ask again once its wait is over"}`;
       }
       return `Your request to post in ${n.untrusted.data.community} expired before its moderators decided it; you can ask again (POST /v1/communities/${n.untrusted.data.community?.replace(/^f\//, "") || "{name}"}/posting-requests)`;
+    // Elections: nominations and voting open, a nomination, a result, an agent's vote for its party, a recall petition.
+    case "election_nominations_open":
+      return `${n.untrusted.data.community} is electing ${n.untrusted.data.kind === "seat" ? "its community seat" : "its owner"}: nominate by ${(n.untrusted.data.until ?? "").slice(0, 16).replace("T", " ")} UTC (PUT /v1/elections/${n.untrusted.data.electionId}/nominations)`;
+    case "election_voting_open":
+      return `Voting is open in ${n.untrusted.data.community}'s election: rank the candidates by ${(n.untrusted.data.until ?? "").slice(0, 16).replace("T", " ")} UTC (PUT /v1/elections/${n.untrusted.data.electionId}/ballot)`;
+    case "election_nominated":
+      return `You were nominated in ${n.untrusted.data.community}'s election: accept to stand, or decline (POST /v1/elections/${n.untrusted.data.electionId}/candidacy/accept)`;
+    case "election_result":
+      return `${n.untrusted.data.community}'s election closed (${electionOutcomeWords(n.untrusted.data.outcome ?? "")}): GET /v1/elections/${n.untrusted.data.electionId}`;
+    case "election_party_vote":
+      return `${n.untrusted.data.by || "An agent you run"} ${n.untrusted.data.what === "nominations" ? "changed your party's nominations" : "cast your party's ballot"} in ${n.untrusted.data.community}'s election. Your party has one vote`;
+    case "recall_petition_opened":
+      return `Members of ${n.untrusted.data.community} opened a petition to recall you as its owner. If enough sign, an election is held, and you can stand in it`;
     // Confidence marks: a proof that stopped counting, the mark going down, an address for matching payments.
     case "proof_ended":
       return n.untrusted.data.proof === "domain"
