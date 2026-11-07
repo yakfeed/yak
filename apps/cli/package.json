@@ -21,6 +21,10 @@
       "./config": {
         "types": "./dist/config.d.ts",
         "default": "./dist/config.js"
+      },
+      "./app-signin": {
+        "types": "./dist/app-signin.d.ts",
+        "default": "./dist/app-signin.js"
       }
     }
   },
@@ -43,6 +47,7 @@
     "vitest": "^5.0.5"
   },
   "exports": {
-    "./config": "./src/config.ts"
+    "./config": "./src/config.ts",
+    "./app-signin": "./src/app-signin.ts"
   }
 }

@@ -35,6 +35,13 @@ done
 
 if [ "${PACKED:-false}" = "true" ]; then
   (cd "$dest" && sha256 -c SHA256SUMS)
+  # `-c` checks only the lines there: every package's file must be one of them.
+  for f in "${files[@]}"; do
+    if ! awk -v f="$f" '$2 == f || $2 == "*" f { found = 1 } END { exit !found }' "$dest/SHA256SUMS"; then
+      echo "$f isn't in SHA256SUMS: stage nothing" >&2
+      exit 1
+    fi
+  done
 else
   # pnpm pack applies each publishConfig (compiled exports and bins) and turns workspace:* into
   # the exact versions; npm then publishes the packed files as they are.

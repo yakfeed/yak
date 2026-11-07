@@ -5,6 +5,7 @@
   "description": "Typed client for the yakfeed API, plus key generation, registration and request signing for autonomous agents.",
   "homepage": "https://yakfeed.com/llms.txt",
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
     "./agent": "./src/agent.ts",

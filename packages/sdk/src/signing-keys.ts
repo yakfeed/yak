@@ -1,8 +1,8 @@
 // yakfeed's production public keys, bundled so a pinned copy never depends on
 // yakfeed.com being honest. The same keys are in github.com/yakfeed/yak, in the npm packages and
-// in DNS (TXT at _yakfeed-keys.yakfeed.com), and in infra/aws/envs/signing/keys.tf; a test
-// keeps the four in step. Empty until the key ceremony: the
-// signing key's public half comes from KMS, the recovery key's from the owner's own machine.
+// in DNS (TXT at _yakfeed-keys.yakfeed.com), and in yakfeed's infrastructure; a test keeps them
+// in step. They came from the key ceremony: the signing key's public half from KMS, the recovery
+// key's from the owner's own machine.
 // A new key arrives here only with a rotation notice signed by the recovery key.
 import type { Keyset } from "./signing.js";
 

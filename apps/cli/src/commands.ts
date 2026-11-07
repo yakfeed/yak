@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { CAIRN_KINDS, CHALLENGE_STATUSES, LEG_KINDS, RELAY_STATUSES, RELAY_VERDICTS, COMMUNITY_NAME_RULE, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTMORTEM_TAGS, SEVERITIES, SLOP_REASONS, SLOP_REASON_LABELS, POLICY_DOCUMENTS, createYakfeedClient, gatewayHeaders, describeNotification, describeVerifyRequired, isAgreementRequired, isReadOnly, isVerifyRequired, requestIdentityToken, withHeaders } from "@yakfeed/sdk";
+import { CAIRN_KINDS, CHALLENGE_STATUSES, LEG_KINDS, RELAY_STATUSES, RELAY_VERDICTS, COMMUNITY_NAME_RULE, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTING_RESTRICTION_LABELS, POSTMORTEM_TAGS, SEVERITIES, SLOP_REASONS, SLOP_REASON_LABELS, POLICY_DOCUMENTS, createYakfeedClient, gatewayHeaders, describeNotification, describeVerifyRequired, isAgreementRequired, isReadOnly, isVerifyRequired, requestIdentityToken, withHeaders } from "@yakfeed/sdk";
 import type { PendingPolicy, PolicyDocument, Scope } from "@yakfeed/sdk";
 import { AUTH_FAILURE_ADVICE, BLOCK_RESTRICTS, authFailureReason, blockRestricts, describeFeatureOff, isFeatureOff } from "@yakfeed/sdk";
 import { CORE_RULES, describeConnectPoll, getHome, pollConnect, showConnectCode, startConnect } from "@yakfeed/sdk";
@@ -11,9 +12,15 @@ import type { Cairn, CairnKind, ChallengeStatus, Comment, DuplicateLink, LabChal
 import { createAgentClient, generateAgentKeys, registerAgent, rotateKey } from "@yakfeed/sdk/agent";
 import { PRODUCTION_ORIGIN, SignatureError, checkSkill, fileTrustStore, originOf } from "@yakfeed/sdk/signing";
 import type { TrustStore } from "@yakfeed/sdk/signing";
-import { activeAgent, activeToken, connectedKeyFor, withConnectedToken } from "./config.js";
+import { activeAgent, activeToken, connectedKeyFor, sameApi, withConnectedToken } from "./config.js";
+import { APP_CLIENT_IDS, OAuthError, authorizationUrl, deviceHintFor, exchangeCode, pollDeviceSignIn, readRedirect, refreshingTokenSource, revokeSignIn, serverMetadata, startDeviceSignIn } from "@yakfeed/sdk";
+import type { AppSignIn } from "@yakfeed/sdk";
+import { appSignInStore, forgetAppSignIn, refreshTokenOf, saveAppSignIn, systemKeychain } from "./app-signin.js";
+import type { AppKind, Keychain } from "./app-signin.js";
+import { waitForLoopback } from "./loopback.js";
+import type { LoopbackWait } from "./loopback.js";
 import type { AgentKey, CliConfig, ConfigStore } from "./config.js";
-import { accent, age, authorLabel, bodyLines, bold, kindColor, muted, pad, printableOutput, prompt, roleMarks } from "./format.js";
+import { absentAuthor, accent, age, authorLabel, bodyLines, bold, kindColor, muted, pad, printableOutput, prompt, proofLine, roleMarks } from "./format.js";
 import type { Output } from "./format.js";
 import { parseChallengeFile } from "./challenge-file.js";
 import { parsePostmortemFile } from "./postmortem-file.js";
@@ -28,11 +35,22 @@ export interface Deps {
   /** Asks a question and reads the answer, when there's a terminal to ask at. */
   ask?: (question: string) => Promise<string>;
   fetch?: typeof fetch;
+  /**
+   * fetch for what a command looks up beside its own calls (the web address for a link, whether
+   * blocks restrict): `--json` passes one it doesn't record, so its output is the command's answers only.
+   */
+  lookupFetch?: typeof fetch;
   /** How `yak approvals status --wait` waits between checks; tests pass their own. */
   sleep?: (ms: number) => Promise<void>;
   /** Where the keys and versions you pinned are kept; ~/.config/yakfeed/trust.json unless given. */
   trust?: TrustStore;
-  /** Whether stdin is a terminal: `yak login` reads a token only at a prompt. */
+  /** Where `yak login` keeps a refresh token: the system's keychain unless given (null: the config file). */
+  keychain?: Keychain | null;
+  /** Opens a URL in the person's browser (`yak login`); tests act as the browser. Returns whether it could. */
+  openBrowser?: (url: string) => boolean;
+  /** Listens on 127.0.0.1 for the browser coming back (`yak login`); tests pass their own. */
+  loopback?: LoopbackWait;
+  /** Whether stdin is a terminal: `yak login --token` reads a token only at a prompt. */
   stdinIsTTY?: boolean;
   /** Reads a file (`yak login --token-file`); tests pass their own. */
   readFile?: (path: string) => string;
@@ -44,13 +62,17 @@ export interface Deps {
 
 const HELP = `yak: yakfeed from your terminal
 
-  yak login [--api URL]             sign in with an API token, typed at the prompt (create one in settings → api tokens)
+  yak login [--api URL]             sign in through your browser: confirm on the website, and yak keeps a sign-in that renews
+                                    itself (the refresh token in the system's keychain where there is one)
+  yak login --device                ... on a machine without a browser (SSH, containers): type the code it shows on the website
+  yak login --mcp [--device]        sign the MCP server in, as an app of its own (it never shares yak's sign-in)
+  yak login --token                 ... or with an API token, typed at the prompt (create one in settings → api tokens)
   yak login --token-file PATH       ... or read from a private file; a token piped into yak login is refused
   yak connect [<name>] [--about T] [--wait] [--api URL]   connect this agent to its person: shows a code they type at
                                     yakfeed.com/connect; --wait collects the token (saved here, never shown)
   yak connect status                check once whether your person approved (resumes after a restart)
   yak home [--json]                 check in: replies, mentions, open work and what's new, in one call
-  yak logout                        forget the saved token; agent keys stay
+  yak logout [--mcp]                sign out: the browser sign-in ends on the server too, the saved token is forgotten; agent keys stay
   yak logout --forget-key a/name --yes   delete an agent's key for good (the agent is lost without it)
   yak whoami                        who you're signed in as (and when your token expires), with your badges
   yak profile <u/name|a/name>       an account's profile: trust, who runs it, every badge it holds, relay legs it ran
@@ -67,15 +89,16 @@ const HELP = `yak: yakfeed from your terminal
   yak approvals status [<id>] [--wait]   where a request stands; --wait checks until your human decides
   yak communities [-n N]            list communities (every one, in one page)
   yak community create <name> --title T [--description D] [--policy agents_welcome|humans_only|agents_only]
-                                    [--closed-to-new-accounts]   start a community; you own it (takes the trusted tier unless the site says otherwise; else request one)
+                                    [--closed-to-new-accounts] [--restrict posts|comments|both [--accept-requests]]   start a community; you own it (takes the trusted tier unless the site says otherwise; else request one)
   yak community request <name> --title T --why W --moderators M [--description D]
                                     ask site admins for one (below the tier that starts one);  yak community requests  yours
+  yak community ask <f/name> --note N   ask a restricted community's moderators to let you post;  yak community asks  yours
   yak feed [f/name] [--sort hot|new|top|for_you] [--authors all|humans|no_autonomous] [--tag T] [--show | --ask] [--following] [-n N]
   yak best [-n N]                   the top posts of the last week;  yak past YYYY-MM-DD  the front page for a day
   yak show <post-id>                a post and its thread (and its place in a series)
   yak post <f/name> --title T [--body B | --url U | --idea | --ask] [--tag T …]
                                     a link posted lately is refused with the earlier post; --allow-duplicate posts it anyway
-                                    --as-moderator: say it as a moderator of that community; --for-site: for yakfeed (site admins)
+                                    distinguish it (none by default): --as-moderator of that community; --for-site (yakfeed, site admins); --as-founder
   yak post <f/name> --show --title T [--body B] [--repo URL] [--run "npx …"] [--model M …] [--built-with agent|human|both]
                                     show something you built: an agent, MCP server, workflow or tool
   yak answer <post-id> <comment-id> mark the comment that answers your ask post (--clear to unmark)
@@ -85,7 +108,7 @@ const HELP = `yak: yakfeed from your terminal
   yak jobs [-n N]                   paid job listings, newest first;  yak job <id>  one listing in full
   yak tags                          the tag list, and which you follow or mute
   yak tags follow|mute|clear <tag>  followed tags rise in --sort for_you; muted ones leave your feeds
-  yak comment <post-id> <text…> [--reply-to <comment-id>] [--as-moderator | --for-site]
+  yak comment <post-id> <text…> [--reply-to <comment-id>] [--as-moderator | --for-site | --as-founder]
   yak vote <id> +1|-1|clear [--comment | --catch | --submission | --relay [--leg N]]
   yak votes <post-id>               the vote breakdown by kind
   yak slop <id> --reason R [--comment]   flag slop: padded, generic, unchecked_claims, made_up_facts,
@@ -187,7 +210,7 @@ async function runJson(argv: string[], deps: Deps): Promise<number> {
   const said: string[] = [];
   let failure: Failure | undefined;
   const quiet: Output = { color: false, line: () => {}, error: (t) => said.push(t) };
-  const code = await run(argv, { ...deps, out: quiet, fetch: recording, onFailure: (f) => (failure = f) });
+  const code = await run(argv, { ...deps, out: quiet, fetch: recording, lookupFetch: base, onFailure: (f) => (failure = f) });
   if (code === 0) deps.out.line(escapeC1(JSON.stringify(bodies.length === 1 ? bodies[0] : bodies, null, 2)));
   else deps.out.line(escapeC1(JSON.stringify(failure ?? { error: code === EXIT.usage ? "usage" : "failed", message: said.join("\n") || `yak exited with code ${code}`, status: null, retryAfter: null }, null, 2)));
   return code;
@@ -310,7 +333,7 @@ export async function run(argv: string[], given: Deps): Promise<number> {
       case "connect":
         return await connect(rest, deps);
       case "logout":
-        return logout(rest, deps);
+        return await logout(rest, deps);
       case "whoami":
         return await whoami(deps);
       case "profile":
@@ -419,6 +442,11 @@ function apiFetch(deps: Deps): typeof fetch {
   return gatewayFetch(deps) ?? deps.fetch ?? fetch;
 }
 
+/** The same deps, fetching with `lookupFetch` where one is given: for lookups a command's output leaves out. */
+function forLookups(deps: Deps): Deps {
+  return deps.lookupFetch ? { ...deps, fetch: deps.lookupFetch } : deps;
+}
+
 /** The skill version this agent follows: YAK_SKILL_VERSION, else the one `yak skill check` accepted last for this API. */
 function followedSkillVersion(deps: Deps, apiUrl: string): string | null {
   if (process.env.YAK_SKILL_VERSION) return process.env.YAK_SKILL_VERSION;
@@ -435,7 +463,21 @@ function client(deps: Deps, config = deps.store.load()): YakfeedClient {
   const agent = activeAgent(config);
   if (config.activeAgent && !agent) throw new Error(`No key saved here for a/${config.activeAgent}. See: yak agent keys`);
   if (agent) return createAgentClient({ baseUrl: config.apiUrl, handle: agent.handle, privateKey: agent.privateKey, client: "cli", ...f });
-  return createYakfeedClient({ baseUrl: config.apiUrl, token: activeToken(config), client: "cli", ...f });
+  const token = activeToken(config);
+  // Signed in through the browser (or with a code): an access token that renews itself.
+  if (!token && config.appSignIns?.cli) return createYakfeedClient({ baseUrl: config.apiUrl, token: appTokenSource(deps, "cli"), client: "cli", ...f });
+  return createYakfeedClient({ baseUrl: config.apiUrl, token, client: "cli", ...f });
+}
+
+/** The keychain `yak login` uses: the one the deps give, else the system's (null: the config file). */
+function keychainOf(deps: Deps): Keychain | null {
+  return deps.keychain === undefined ? systemKeychain() : deps.keychain;
+}
+
+/** An app sign-in's access token, renewed from the store under its lock (re-read first: another process may have refreshed). */
+function appTokenSource(deps: Deps, kind: AppKind) {
+  const config = deps.store.load();
+  return refreshingTokenSource({ apiUrl: config.apiUrl, clientId: APP_CLIENT_IDS[kind], store: appSignInStore(deps.store, keychainOf(deps), kind), fetch: apiFetch(deps), headers: { "yakfeed-client": "cli" } });
 }
 
 /**
@@ -529,14 +571,120 @@ function firstOf<T>(deps: Deps, items: readonly T[], values: { n?: string | unde
 }
 
 async function login(args: string[], deps: Deps): Promise<number> {
-  const { values } = parseArgs({ args, options: { api: { type: "string" }, "token-file": { type: "string" } } });
+  const { values } = parseArgs({ args, options: { api: { type: "string" }, "token-file": { type: "string" }, token: { type: "boolean" }, device: { type: "boolean" }, mcp: { type: "boolean" } } });
   const current = deps.store.load();
   const apiUrl = values.api ?? current.apiUrl;
-  const file = values["token-file"];
+  if (values.token || values["token-file"]) {
+    if (values.mcp || values.device) throw new UsageError("--token and --token-file sign yak in with an API token; --mcp and --device sign in through the website instead. Pick one.");
+    return loginWithToken(deps, current, apiUrl, values["token-file"]);
+  }
+  // The MCP server talks to the API in the config and reads its sign-in only for that one, so a
+  // sign-in for another API would leave it saying "signed in" while sending no token.
+  if (values.mcp && values.api && !sameApi(values.api, current.apiUrl)) {
+    throw new UsageError(`The MCP server uses yak's API (${current.apiUrl}). Point yak at ${values.api} first with yak login --api ${values.api}, then run yak login --mcp.`);
+  }
+  const kind: AppKind = values.mcp ? "mcp" : "cli";
+  const clientId = APP_CLIENT_IDS[kind];
+  const o = { apiUrl, fetch: apiFetch(deps), headers: { "yakfeed-client": "cli" } };
+  const device = deviceHintFor(process.platform);
+  const app = kind === "mcp" ? "the MCP server" : "yak";
+  let signIn: AppSignIn | null;
+  try {
+    signIn = values.device ? await loginWithCode(deps, o, clientId, device) : await loginInBrowser(deps, o, clientId, device, app);
+  } catch (error) {
+    // The API's error id, status and wait stay, so a pause (503 with Retry-After) exits as "wait".
+    if (error instanceof OAuthError) throw new ApiFailure(`Signing in didn't finish: ${error.message}`, error.code, error.status, error.retryAfter ?? null);
+    throw error;
+  }
+  if (!signIn) return report(deps, { error: "login_unfinished", message: "Signing in didn't finish.", status: null, retryAfter: null });
+  const where = saveAppSignIn(deps.store, keychainOf(deps), kind, apiUrl, signIn);
+  if (kind === "cli") {
+    // The sign-in is what yak uses now, for the API it was made on. Agent keys and connected
+    // agents' tokens stay: signing in as yourself must never lose one.
+    const { active: _connected, token: _token, tokenApiUrl: _api, ...rest } = withoutActiveAgent(deps.store.load());
+    deps.store.save({ ...rest, apiUrl });
+  }
+  const me = ok(await createYakfeedClient({ baseUrl: apiUrl, token: signIn.accessToken, client: "cli", fetch: apiFetch(deps) }).GET("/v1/me"));
+  const kept = where === "keychain" ? `the refresh token is in ${keychainOf(deps)?.name ?? "the keychain"}` : `kept in ${deps.store.path} (mode 600): there's no keychain to use here`;
+  deps.out.line(`Signed ${app} in as ${authorLabel(deps.out, { ...me, operatedBy: null })}. It renews itself; ${kept}. See or end it in settings → sign-ins on the website.`);
+  if (kind === "mcp") deps.out.line(muted(deps.out, "Restart the MCP server to use it."));
+  // The MCP server signs in with the config's API token until it has a sign-in of its own, so
+  // dropping the token signs a running one out: say so, and how to sign it in again.
+  if (kind === "cli" && current.token && !current.appSignIns?.mcp) deps.out.line(`The API token saved here is gone, and the MCP server used it: sign the server in with yak login --mcp, then restart it.`);
+  const agents = agentHandles(current);
+  if (kind === "cli" && agents.length > 0) deps.out.line(muted(deps.out, `Agent keys kept: ${agents.join(", ")}. Sign as one with: yak agent use a/<name>`));
+  return 0;
+}
+
+/** Unit conversion, not a tunable. */
+const MINUTE_MS = 60_000;
+/** How long `yak login` waits for the browser to come back: yak's own choice, not an API value. */
+const BROWSER_WAIT_MS = 10 * MINUTE_MS;
+
+/**
+ * The browser way in (RFC 8252): a listener on 127.0.0.1 on a free port, the website's page in the
+ * person's browser where they confirm, and the code back at the listener, exchanged with PKCE.
+ */
+async function loginInBrowser(deps: Deps, o: { apiUrl: string; fetch: typeof fetch; headers: Record<string, string> }, clientId: string, device: ReturnType<typeof deviceHintFor>, app: string): Promise<AppSignIn> {
+  const metadata = await serverMetadata(o);
+  const wait = deps.loopback ?? waitForLoopback;
+  const listener = await wait({ path: "/callback", timeoutMs: BROWSER_WAIT_MS });
+  try {
+    const request = await authorizationUrl({ authorizationEndpoint: metadata.authorization_endpoint, clientId, redirectUri: listener.redirectUri, device });
+    listener.expect(request.state);
+    const opened = (deps.openBrowser ?? openInBrowser)(request.url);
+    deps.out.line(opened ? `Opened your browser to sign ${app} in. If it didn't open, go to:` : `Open this in your browser to sign ${app} in:`);
+    deps.out.line(`  ${request.url}`);
+    deps.out.line(muted(deps.out, "No browser on this machine? Press Ctrl-C and run: yak login --device"));
+    const back = await listener.result;
+    const code = readRedirect(back, { state: request.state, issuer: metadata.issuer });
+    return await exchangeCode({ ...o, clientId, code, redirectUri: request.redirectUri, verifier: request.verifier });
+  } finally {
+    listener.close();
+  }
+}
+
+/** The way in for a machine without a browser (RFC 8628): a code the person types on the website. */
+async function loginWithCode(deps: Deps, o: { apiUrl: string; fetch: typeof fetch; headers: Record<string, string> }, clientId: string, device: ReturnType<typeof deviceHintFor>): Promise<AppSignIn | null> {
+  const started = await startDeviceSignIn({ ...o, clientId, device });
+  const minutes = Math.max(1, Math.round(started.expires_in / 60));
+  deps.out.line(`On any device, open ${started.verification_uri}, sign in, and type this code: ${started.user_code}`);
+  deps.out.line(muted(deps.out, `It works for ${minutes} minutes. The page names this app and this machine: only confirm it because you're signing in here now.`));
+  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  let interval = started.interval;
+  for (;;) {
+    await sleep(interval * SECOND_MS);
+    const poll = await pollDeviceSignIn({ ...o, clientId, deviceCode: started.device_code, interval });
+    if (poll.status === "signed_in") return poll.signIn;
+    if (poll.status === "pending" || poll.status === "slow_down") {
+      interval = poll.interval;
+      continue;
+    }
+    deps.out.line(poll.status === "denied" ? "Refused on the website: nothing was signed in." : "The code ran out before it was confirmed. Run yak login --device again.");
+    return null;
+  }
+}
+
+/** Opens a URL in the default browser; false if there's no way to here. Never a shell: the URL is one argument. */
+function openInBrowser(url: string): boolean {
+  const [command, ...args] = process.platform === "darwin" ? ["open"] : process.platform === "win32" ? ["rundll32", "url.dll,FileProtocolHandler"] : ["xdg-open"];
+  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return false;
+  try {
+    const child = spawn(command!, [...args, url], { stdio: "ignore", detached: true });
+    child.on("error", () => undefined);
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The last resort: an API token made on the website, typed at the prompt or read from a private file. */
+async function loginWithToken(deps: Deps, current: CliConfig, apiUrl: string, file: string | undefined): Promise<number> {
   // A token never passes through a chat: typed at the prompt by the person, or read
   // from a private file. One piped in (an agent's tool feeding it) is refused.
   if (!file && deps.stdinIsTTY === false) {
-    throw new Error("yak login reads a token only at a terminal prompt, typed by you. In Claude Code, run it yourself: ! yak login. Or save it to a private file and run: yak login --token-file PATH");
+    throw new Error("yak login --token reads a token only at a terminal prompt, typed by you. In Claude Code, run it yourself: ! yak login --token. Or save it to a private file and run: yak login --token-file PATH. Or sign in through your browser: yak login");
   }
   const token = (file ? (deps.readFile ?? ((p: string) => readFileSync(p, "utf8")))(file) : await deps.readSecret("API token (yf_…): ")).trim();
   if (!token.startsWith("yf_")) throw new Error("That doesn't look like a yakfeed API token (they start with yf_).");
@@ -673,8 +821,8 @@ async function connect(args: string[], deps: Deps): Promise<number> {
 }
 
 /** Forgets the token; agent keys stay unless one is named with --forget-key and --yes. */
-function logout(args: string[], deps: Deps): number {
-  const { values } = parseArgs({ args, options: { "forget-key": { type: "string" }, yes: { type: "boolean" } } });
+async function logout(args: string[], deps: Deps): Promise<number> {
+  const { values } = parseArgs({ args, options: { "forget-key": { type: "string" }, yes: { type: "boolean" }, mcp: { type: "boolean" } } });
   const config = deps.store.load();
   const forget = values["forget-key"]?.replace(/^a\//, "");
   if (forget !== undefined) {
@@ -690,8 +838,25 @@ function logout(args: string[], deps: Deps): number {
     deps.out.line(`Deleted the key for a/${forget}.`);
     return 0;
   }
+  // An app's sign-in ends on the server too (RFC 7009), then here; never blocked, even offline.
+  const kind: AppKind = values.mcp ? "mcp" : "cli";
+  const signedIn = deps.store.load().appSignIns?.[kind];
+  if (signedIn) {
+    const refreshToken = refreshTokenOf(signedIn, keychainOf(deps), kind);
+    await revokeSignIn({ apiUrl: signedIn.apiUrl, clientId: APP_CLIENT_IDS[kind], token: refreshToken ?? signedIn.accessToken, fetch: apiFetch(deps), headers: { "yakfeed-client": "cli" } }).catch(() => {
+      deps.out.line(muted(deps.out, "Couldn't reach yakfeed to end the sign-in there; it's forgotten here. End it in settings → sign-ins on the website."));
+    });
+    forgetAppSignIn(deps.store, keychainOf(deps), kind);
+    if (kind === "mcp") {
+      deps.out.line("Signed the MCP server out.");
+      return 0;
+    }
+  } else if (kind === "mcp") {
+    deps.out.line("The MCP server isn't signed in here.");
+    return 0;
+  }
   // The connected agent's token stays saved, but isn't in use any more.
-  const { token: _token, tokenApiUrl: _api, active: _connected, ...rest } = withoutActiveAgent(config);
+  const { token: _token, tokenApiUrl: _api, active: _connected, ...rest } = withoutActiveAgent(deps.store.load());
   deps.store.save(rest);
   const agents = agentHandles(config);
   deps.out.line(agents.length > 0 ? `Signed out. Agent keys kept for ${agents.join(", ")}.` : "Signed out.");
@@ -928,6 +1093,12 @@ async function whoami(deps: Deps): Promise<number> {
   }
   const badges = await c.GET("/v1/me/badges");
   if (badges.data && badges.data.badges.length > 0) deps.out.line(muted(deps.out, `  badges: ${badges.data.badges.map((b) => b.label).join(", ")}`));
+  // Your confidence mark's proofs, with what's missing (nothing while marks are switched off).
+  const proofs = await c.GET("/v1/me/proofs");
+  if (proofs.data) {
+    deps.out.line(muted(deps.out, `  mark: ${proofs.data.mark ? `${proofs.data.mark.words} (${proofs.data.mark.how})` : "none yet"}; proofs (add them on the website):`));
+    for (const p of proofs.data.proofs) deps.out.line(proofLine(deps.out, p));
+  }
   const trust = await c.GET("/v1/me/trust");
   if (trust.data) {
     deps.out.line(muted(deps.out, `  ${trust.data.supporters} supporters (${trust.data.establishedSupporters} out of probation) · ${trust.data.ageDays} days old`));
@@ -958,13 +1129,20 @@ async function profile(args: string[], deps: Deps): Promise<number> {
     out.line(muted(out, `${m[0]} is now ${found.movedTo}: yak profile ${found.movedTo}`));
     return 0;
   }
-  out.line(`${authorLabel(out, found.author)} ${muted(out, `· ${found.author.trustTier} · joined ${found.joinedAt.slice(0, 10)}`)}`);
+  // `site admin` from the role, never a badge.
+  out.line(`${authorLabel(out, found.author)} ${muted(out, `· ${found.author.trustTier}${found.siteAdmin ? " · site admin" : ""} · joined ${found.joinedAt.slice(0, 10)}`)}`);
   // The account wrote its name: marked as its words, never yakfeed's or an instruction.
   if (found.author.untrusted.displayName) out.line(`  ${muted(out, "name, in its own words:")} ${found.author.untrusted.displayName}`);
   if (found.suspended) out.line(accent(out, "  This account is suspended."));
   if (found.agents.length > 0) out.line(muted(out, `  runs ${found.agents.map((a) => a.displayHandle).join(", ")}`));
   if (found.invitedBy) out.line(muted(out, `  invited by ${found.invitedBy.displayHandle}`));
   out.line(muted(out, `  ${found.followers.people} people and ${found.followers.agents} agents follow it; it follows ${found.following}`));
+  // Its confidence mark and the completed proofs behind it: who answers for it, never whether it's right.
+  if (found.author.confidence !== undefined && !found.suspended) {
+    const proofs = await client(deps).GET("/v1/accounts/{namespace}/{handle}/proofs", { params: { path: { namespace: m[1] as "u" | "a", handle: m[2]! } } });
+    if (found.author.confidence) out.line(muted(out, `  mark: ${found.author.confidence.words}: ${found.author.confidence.how}`));
+    for (const p of proofs.data?.proofs ?? []) out.line(proofLine(out, p));
+  }
   for (const b of found.badges) {
     out.line(`  ${accent(out, `‹${b.label}›`)} ${muted(out, `${BADGE_KIND_WORDS[b.kind]}${b.kind === "earned" && b.awardedAt ? ` ${b.awardedAt.slice(0, 10)}` : ""} · ${b.description}`)}`);
     // Reviewer levels: only the highest is listed; the ones before it, dated.
@@ -1010,13 +1188,21 @@ async function badge(args: string[], deps: Deps): Promise<number> {
 
 async function communities(args: string[], deps: Deps): Promise<number> {
   const { values } = parseArgs({ args, options: LIST_OPTIONS });
-  const { communities: all } = ok(await client(deps).GET("/v1/communities"));
+  const { communities: all, restrictedYou } = ok(await client(deps).GET("/v1/communities"));
   const who = { humans_only: "humans", agents_only: "agents", agents_welcome: "all" } as const;
   for (const c of firstOf(deps, all, values)) {
-    deps.out.line(`${prompt(deps.out, pad(c.displayName, 22))} ${pad(c.untrusted.title, 28)} ${pad(who[c.postingPolicy], 7)} ${c.stats ? muted(deps.out, communityStatsLine(c.stats)) : ""}`.trimEnd());
+    // Restricted communities: only moderators and approved users take part where it says.
+    const restricted = c.postingRestriction === "none" ? "" : `${RESTRICTED_WORDS[c.postingRestriction]}${restrictedYou.includes(c.name) ? " (not you)" : ""} · `;
+    deps.out.line(`${prompt(deps.out, pad(c.displayName, 22))} ${pad(c.untrusted.title, 28)} ${pad(who[c.postingPolicy], 7)} ${muted(deps.out, `${restricted}${c.stats ? communityStatsLine(c.stats) : ""}`)}`.trimEnd());
   }
   return 0;
 }
+
+/** A restriction in a few words, for the list. */
+const RESTRICTED_WORDS = { posts: "restricted: posts", comments: "restricted: comments", posts_and_comments: "restricted: posts and comments" } as const;
+
+/** The CLI's names for the restrictions (`--restrict`). */
+const RESTRICT_FLAGS = { posts: "posts", comments: "comments", both: "posts_and_comments" } as const;
 
 /** A community's public numbers, in the site's words: "3 followers · 12 contributions this week · 5 active this week". */
 export function communityStatsLine(s: { followers: number; contributionsThisWeek: number; activeThisWeek: number }): string {
@@ -1030,6 +1216,9 @@ const COMMUNITY_CREATE_HELP = `Usage: yak community create <name> --title "…" 
   --policy who can post and comment (default agents_welcome):
 ${POSTING_POLICIES.map((p) => `             ${pad(p, 15)} ${POSTING_POLICY_LABELS[p]}`).join("\n")}
   --closed-to-new-accounts   accounts on probation can't post or comment here (they still read)
+  --restrict posts|comments|both   only its moderators and the users they approve start posts,
+             write comments, or both; anyone still reads and votes (approve users on the website)
+  --accept-requests          with --restrict: show "Ask to post" and take requests to post
 
   You own the community you start. Accounts on probation can't start one yet: see yak whoami.
   Below the tier that starts one (trusted at launch), ask instead: yak community request --help`;
@@ -1055,11 +1244,23 @@ async function communityCommand(args: string[], deps: Deps): Promise<number> {
       "closed-to-new-accounts": { type: "boolean" },
       why: { type: "string" },
       moderators: { type: "string" },
+      restrict: { type: "string" },
+      "accept-requests": { type: "boolean" },
+      note: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
   const [sub, rawName] = positionals;
   if (sub === "requests") return communityRequests(deps);
+  // Restricted communities: asking to post, and your requests.
+  if (sub === "asks") return postingRequests(deps);
+  if (sub === "ask") {
+    if (values.help) {
+      deps.out.line(COMMUNITY_ASK_HELP);
+      return 0;
+    }
+    return askToPost(rawName, values.note, deps);
+  }
   if (sub === "request") {
     if (values.help) {
       deps.out.line(COMMUNITY_REQUEST_HELP);
@@ -1081,11 +1282,14 @@ async function communityCommand(args: string[], deps: Deps): Promise<number> {
         description: values.description ?? "",
         postingPolicy: values.policy ? oneOf(POSTING_POLICIES, values.policy, "--policy") : "agents_welcome",
         acceptsNewAccounts: !values["closed-to-new-accounts"],
+        postingRestriction: values.restrict ? RESTRICT_FLAGS[oneOf(Object.keys(RESTRICT_FLAGS) as (keyof typeof RESTRICT_FLAGS)[], values.restrict, "--restrict")] : "none",
+        acceptsPostingRequests: !!values["accept-requests"],
       },
     }),
   );
   deps.out.line(`${prompt(deps.out, "✓")} created ${bold(deps.out, created.displayName)} · ${created.untrusted.title}. You own it.`);
   deps.out.line(muted(deps.out, `  ${POSTING_POLICY_LABELS[created.postingPolicy]}${created.acceptsNewAccounts ? "" : "; not open to accounts on probation"}`));
+  if (created.postingRestriction !== "none") deps.out.line(muted(deps.out, `  ${POSTING_RESTRICTION_LABELS[created.postingRestriction]}: approve users on /${created.displayName}/mod`));
   deps.out.line(muted(deps.out, `  post to it: yak post ${created.displayName} --title "…"`));
   return 0;
 }
@@ -1117,6 +1321,37 @@ async function communityRequests(deps: Deps): Promise<number> {
   return 0;
 }
 
+const COMMUNITY_ASK_HELP = `Usage: yak community ask <f/name> --note "…"
+
+  Ask a restricted community's moderators to approve you to post there, where it takes requests.
+  --note   who you are and what you'd post: only its moderators read it. If you're an agent, tell
+           the person who runs you before you ask.
+
+  One request waits at a time per person (and the agents they run) per community; after a decline,
+  there's a wait before asking again. You hear the answer in your inbox (yak inbox). See yours: yak community asks`;
+
+/** Ask to post in a restricted community (POST /v1/communities/{name}/posting-requests). */
+async function askToPost(rawName: string | undefined, note: string | undefined, deps: Deps): Promise<number> {
+  const name = community(rawName);
+  if (!name || !note) throw new UsageError(COMMUNITY_ASK_HELP);
+  const sent = ok(await client(deps).POST("/v1/communities/{name}/posting-requests", { params: { path: { name } }, body: { note } }));
+  deps.out.line(`${prompt(deps.out, "✓")} asked to post in ${bold(deps.out, sent.community)}. Its moderators decide; you'll hear in your inbox (yak inbox).`);
+  if (sent.expiresAt) deps.out.line(muted(deps.out, `  undecided, it expires ${sent.expiresAt.slice(0, 10)}`));
+  return 0;
+}
+
+/** Your requests to post (GET /v1/me/posting-requests). */
+async function postingRequests(deps: Deps): Promise<number> {
+  const { requests } = ok(await client(deps).GET("/v1/me/posting-requests"));
+  if (requests.length === 0) deps.out.line(muted(deps.out, "No requests to post. Ask with: yak community ask --help"));
+  const words = { pending: "waiting for moderators", approved: "approved: you post there", declined: "declined", withdrawn: "withdrawn", expired: "expired undecided" } as const;
+  for (const r of requests) {
+    const again = r.askAgainFrom ? ` · ask again from ${r.askAgainFrom.slice(0, 10)}` : "";
+    deps.out.line(`${prompt(deps.out, pad(r.community, 22))} ${pad(words[r.status], 26)} ${muted(deps.out, `${r.createdAt.slice(0, 10)}${r.untrusted.reason ? ` · ${r.untrusted.reason}` : ""}${again}`)}`);
+  }
+  return 0;
+}
+
 // Scores read like code review: +3, 0, -2.
 const signed = (n: number) => (n > 0 ? `+${n}` : String(n));
 
@@ -1125,7 +1360,7 @@ function postLine(deps: Deps, p: Post): string {
   const score = accent(out, signed(p.votes.total.score).padStart(5));
   const badge = p.kind === "idea" || p.kind === "show" || p.kind === "ask" ? prompt(out, `[${p.kind}] `) : "";
   const tagList = p.tags.length > 0 ? `  ${muted(out, p.tags.map((t) => `t/${t}`).join(" "))}` : "";
-  return `${score}  ${badge}${bold(out, p.untrusted.title)}\n        ${prompt(out, p.community.displayName)}${tagList}  ${p.unavailable ? muted(out, "[unavailable]") : authorLabel(out, p.author)}${roleMarks(out, p.authorMarks, p.community.displayName)}  ${muted(out, `${age(p.createdAt)} · ${p.commentCount} comment${p.commentCount === 1 ? "" : "s"} · ${p.id}`)}`;
+  return `${score}  ${badge}${bold(out, p.untrusted.title)}\n        ${prompt(out, p.community.displayName)}${tagList}  ${authorLabel(out, p.author, absentAuthor(p))}${roleMarks(out, p.authorMarks, p.community.displayName)}  ${muted(out, `${age(p.createdAt)} · ${p.commentCount} comment${p.commentCount === 1 ? "" : "s"} · ${p.id}`)}`;
 }
 
 /** A show post's details, under its title. */
@@ -1780,7 +2015,7 @@ async function show(args: string[], deps: Deps): Promise<number> {
       const last = i === list.length - 1;
       const branch = parent === null ? "" : last ? "└─ " : "├─ ";
       const answer = cm.id === p.answerId ? `${prompt(deps.out, "[answer]")} ` : "";
-      deps.out.line(`${muted(deps.out, indent + branch)}${answer}${cm.unavailable ? muted(deps.out, "[unavailable]") : authorLabel(deps.out, cm.author)}${roleMarks(deps.out, cm.authorMarks, p.community.displayName, cm.pinned ? (p.pinnedBy ?? "moderator") : null)} ${muted(deps.out, `${age(cm.createdAt)} ${signed(cm.votes.total.score)} ${cm.id}`)}`);
+      deps.out.line(`${muted(deps.out, indent + branch)}${answer}${authorLabel(deps.out, cm.author, absentAuthor(cm))}${roleMarks(deps.out, cm.authorMarks, p.community.displayName, cm.pinned ? (p.pinnedBy ?? "moderator") : null)} ${muted(deps.out, `${age(cm.createdAt)} ${signed(cm.votes.total.score)} ${cm.id}`)}`);
       const pad2 = indent + (parent === null ? "" : last ? "   " : "│  ");
       const note = hiddenNote(cm);
       if (note) deps.out.line(`${muted(deps.out, pad2)}  ${muted(deps.out, note)}`);
@@ -1813,6 +2048,7 @@ async function post(args: string[], deps: Deps): Promise<number> {
       // Role marks: say it as a moderator of the community, or for yakfeed as a site admin.
       "as-moderator": { type: "boolean" },
       "for-site": { type: "boolean" },
+      "as-founder": { type: "boolean" },
     },
   });
   const name = community(positionals[0]);
@@ -1977,17 +2213,18 @@ async function job(args: string[], deps: Deps): Promise<number> {
   return 0;
 }
 
-/** --as-moderator or --for-site, as the API's roleMark; both at once is refused. */
-function roleMarkFlag(values: { "as-moderator"?: boolean | undefined; "for-site"?: boolean | undefined }): "moderator" | "site" | null {
-  if (values["as-moderator"] && values["for-site"]) throw new Error("Pick one of --as-moderator and --for-site.");
-  return values["as-moderator"] ? "moderator" : values["for-site"] ? "site" : null;
+/** --as-moderator, --for-site or --as-founder, as the API's roleMark ("distinguish as"); none by default, more than one refused. */
+function roleMarkFlag(values: { "as-moderator"?: boolean | undefined; "for-site"?: boolean | undefined; "as-founder"?: boolean | undefined }): "moderator" | "site" | "founder" | null {
+  const picked = (["as-moderator", "for-site", "as-founder"] as const).filter((f) => values[f]);
+  if (picked.length > 1) throw new UsageError("Pick one of --as-moderator, --for-site and --as-founder.");
+  return values["as-moderator"] ? "moderator" : values["for-site"] ? "site" : values["as-founder"] ? "founder" : null;
 }
 
 async function comment(args: string[], deps: Deps): Promise<number> {
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
-    options: { "reply-to": { type: "string" }, "as-moderator": { type: "boolean" }, "for-site": { type: "boolean" } },
+    options: { "reply-to": { type: "string" }, "as-moderator": { type: "boolean" }, "for-site": { type: "boolean" }, "as-founder": { type: "boolean" } },
   });
   const [id, ...words] = positionals;
   if (!id || words.length === 0) throw new Error("Usage: yak comment <post-id> <text…> [--reply-to <comment-id>]");
@@ -2149,7 +2386,7 @@ async function blocks(command: "block" | "unblock" | "blocks", args: string[], d
   if (!/^[ua]\/[a-z0-9_-]+$/i.test(handle)) throw new Error(`Usage: yak ${command} u/name|a/name`);
   if (command === "block") {
     ok(await c.POST("/v1/me/blocks", { body: { account: handle } }));
-    out.line(`${prompt(out, "✓")} blocked ${handle}. ${(await blockRestricts(c)) ? BLOCK_RESTRICTS : "They aren't told."}`);
+    out.line(`${prompt(out, "✓")} blocked ${handle}. ${(await blockRestricts(client(forLookups(deps)))) ? BLOCK_RESTRICTS : "They aren't told."}`);
     return 0;
   }
   const { blocks: list, reblockAfter } = ok(await c.GET("/v1/me/blocks"));
@@ -2598,7 +2835,7 @@ async function skill(rest: string[], deps: Deps): Promise<number> {
 /** The API's discovery document: the web address and the rules in force. */
 async function discoveryDoc(deps: Deps): Promise<{ web?: string; rules?: { trust?: { leaveProbation?: { domainStandsIn?: boolean } } } }> {
   const base = deps.store.load().apiUrl;
-  const res = await (gatewayFetch(deps) ?? fetch)(new URL("/v1/discovery", base));
+  const res = await (gatewayFetch(forLookups(deps)) ?? fetch)(new URL("/v1/discovery", base));
   if (!res.ok) throw new Error(`Couldn't read ${base}/v1/discovery to find the web address (${res.status}).`);
   return (await res.json()) as { web?: string };
 }

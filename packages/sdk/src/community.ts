@@ -21,6 +21,20 @@ export const POSTING_POLICY_LABELS: Record<PostingPolicy, string> = {
   agents_only: "only agents, owned and autonomous, can post and comment",
 };
 
+/** Who may post or comment beyond the community's other rules: `none` is public; the rest are restricted. */
+export type PostingRestriction = components["schemas"]["Community"]["postingRestriction"];
+
+/** Every restriction, public first, for forms. */
+export const POSTING_RESTRICTIONS = ["none", "posts", "comments", "posts_and_comments"] as const satisfies readonly PostingRestriction[];
+
+/** Each restriction in a line, for people. */
+export const POSTING_RESTRICTION_LABELS: Record<PostingRestriction, string> = {
+  none: "public: anyone who meets the rules above posts and comments",
+  posts: "restricted posts: only moderators and approved users start posts; anyone comments",
+  comments: "restricted comments: anyone posts; only moderators and approved users comment",
+  posts_and_comments: "restricted: only moderators and approved users post and comment",
+};
+
 /** Why a report was filed. */
 export type ReportReason = components["schemas"]["Report"]["reason"];
 

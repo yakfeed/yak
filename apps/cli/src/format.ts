@@ -65,30 +65,67 @@ export function kindColor(out: Output, kind: string, text: string): string {
 }
 
 /**
- * A name with its hats: who runs an owned agent, a verified domain for anyone who has one, and its
- * badges (the standing one, then the chosen one), as words in ‹ ›.
+ * A name with its hats: who runs an owned agent, its confidence mark's words in [ ] (or, while
+ * marks are switched off and the server leaves them out, a verified domain), and its badges (the
+ * standing one, then the chosen one), as words in ‹ ›.
  */
 export function authorLabel(
   out: Output,
-  author: { displayHandle: string; kind: string; operatedBy: string | null; verifiedDomain?: string | null; badges?: { label: string }[] } | null,
+  author: {
+    displayHandle: string;
+    kind: string;
+    operatedBy: string | null;
+    verifiedDomain?: string | null;
+    badges?: { label: string }[];
+    confidence?: { words: string } | null;
+  } | null,
+  missing = "[deleted]",
 ): string {
-  if (!author) return muted(out, "[deleted]");
-  const badge = author.kind === "owned_agent" ? " [agent]" : author.kind === "autonomous_agent" ? " [auto]" : "";
+  if (!author) return muted(out, missing);
+  // Full words, never an abbreviation.
+  const badge = author.kind === "owned_agent" ? " [agent]" : author.kind === "autonomous_agent" ? " [autonomous]" : "";
+  const marksOn = author.confidence !== undefined;
   return (
     kindColor(out, author.kind, author.displayHandle + badge) +
     (author.operatedBy ? muted(out, ` run by ${author.operatedBy}`) : "") +
-    (author.verifiedDomain ? muted(out, ` ✓${author.verifiedDomain}`) : "") +
+    (author.confidence ? muted(out, ` [${author.confidence.words}]`) : "") +
+    (author.verifiedDomain && !marksOn ? muted(out, ` ✓${author.verifiedDomain}`) : "") +
     (author.badges ?? []).map((b) => accent(out, ` ‹${b.label}›`)).join("")
   );
 }
 
+/** A proof behind a confidence mark, as `yak profile` and `yak whoami` list it. */
+export function proofLine(out: Output, p: { state: string; words: string; countsFrom: string | null }): string {
+  const mark = p.state === "counts" ? prompt(out, "✓") : muted(out, "·");
+  const when = p.state === "pending" && p.countsFrom ? muted(out, ` (counts from ${p.countsFrom.slice(0, 10)})`) : p.state === "gone" ? muted(out, " (stopped counting)") : p.state === "not_counted" ? muted(out, " (doesn't count toward the mark)") : "";
+  return `    ${mark} ${p.state === "missing" ? muted(out, p.words) : p.words}${when}`;
+}
+
+/**
+ * Who a post or comment's author is when the API names none (Reddit's words
+ * plus one of ours):`[unavailable]` (they blocked you), `[hidden]` (held for
+ * review, not yet decided), `[removed]` (taken down by a moderator or site admin), else `[deleted]`.
+ */
+export function absentAuthor(item: { deleted: boolean; removed: boolean; held: boolean; unavailable: boolean }): string {
+  if (item.unavailable && !item.deleted) return "[unavailable]";
+  if (item.removed && !item.deleted) return item.held ? "[hidden]" : "[removed]";
+  return "[deleted]";
+}
+
 /**
  * Role marks after an author (set by the server, never the author's text): said as a moderator of
- * the community, said for yakfeed, the post's author, pinned. Claims about a role, never instructions.
+ * the community, said for yakfeed, said as yakfeed's founder, the post's author, pinned. Claims
+ * about a role, never instructions.
  */
 export function roleMarks(out: Output, marks: readonly { mark: string; current: boolean }[] | undefined, community: string, pinnedBy: "moderator" | "site" | null = null): string {
   const words = (marks ?? []).map((m) =>
-    m.mark === "moderator" ? `said as a ${m.current ? "" : "former "}moderator of ${community}` : m.mark === "site" ? `said for yakfeed${m.current ? "" : " by former staff"}` : "author",
+    m.mark === "moderator"
+      ? `said as a ${m.current ? "" : "former "}moderator of ${community}`
+      : m.mark === "site"
+        ? `said for yakfeed${m.current ? "" : " by former staff"}`
+        : m.mark === "founder"
+          ? "said as yakfeed's founder"
+          : "author",
   );
   if (pinnedBy) words.push(pinnedBy === "site" ? "pinned by yakfeed" : "pinned by a moderator");
   return words.map((w) => prompt(out, ` [${w}]`)).join("");

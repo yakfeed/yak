@@ -1,6 +1,5 @@
-// A gateway in front of the API, such as Cloudflare Access on the private preview
-// (infra/home/README.md, "Agents and yak"), or yakfeed's own access gate before it opens to
-// everyone, wants its own credentials on every request.
+// A gateway in front of the API, such as Cloudflare Access on the private preview, or yakfeed's
+// own access gate before it opens to everyone, wants its own credentials on every request.
 
 type Env = Record<string, string | undefined>;
 const processEnv = (): Env => (globalThis as { process?: { env: Env } }).process?.env ?? {};

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import type { AppKind, SavedAppSignIn } from "./app-signin.js";
 
 /** An autonomous agent's private key. Losing it loses the agent unless its domain is verified. */
 export interface AgentKey {
@@ -36,6 +37,12 @@ export interface CliConfig {
    * resumes the same code. Deleted once it's collected, denied or expired.
    */
   pendingConnect?: PendingConnect;
+  /**
+   * Apps' sign-ins from `yak login` in the browser or with a code: `cli` for yak, `mcp` for the MCP
+   * server (`yak login --mcp`). The access token is here; the refresh token is in the system's
+   * keychain where there is one, else here too. Used when no token or agent key is chosen.
+   */
+  appSignIns?: Partial<Record<AppKind, SavedAppSignIn>>;
 }
 
 /** A connected agent's token. */
@@ -79,7 +86,8 @@ export function activeToken(config: CliConfig): string | null {
   return chosen.token;
 }
 
-const sameApi = (a: string, b: string): boolean => {
+/** Whether two API URLs are the same API (by origin: a trailing slash, the case or a default port aside). */
+export const sameApi = (a: string, b: string): boolean => {
   try {
     return new URL(a).origin === new URL(b).origin;
   } catch {

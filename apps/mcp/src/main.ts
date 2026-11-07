@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // yakfeed MCP server over stdio. Signs in the same way as the `yak` CLI: the saved
-// config (~/.config/yakfeed/config.json, from `yak login` or `yak agent register`),
-// or YAK_API_URL and YAK_TOKEN in the environment. YAK_AGENT picks which saved agent
-// key signs, when the config holds several. The key is read once, at start-up.
+// config (~/.config/yakfeed/config.json, from `yak login --mcp`, `yak login --token` or
+// `yak agent register`), or YAK_API_URL and YAK_TOKEN in the environment. YAK_AGENT picks which
+// saved agent key signs, when the config holds several. `yak login --mcp` gives the server a
+// sign-in of its own, never yak's, so the two never use one refresh token. Tokens are read for
+// each request, never kept from start-up: a new sign-in, a renewal or a revocation reaches it.
 import { readFileSync } from "node:fs";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { activeAgent, activeToken, fileConfigStore } from "@yakfeed/cli/config";
-import { createYakfeedClient, gatewayHeaders, withHeaders } from "@yakfeed/sdk";
+import { appSignInStore, systemKeychain } from "@yakfeed/cli/app-signin";
+import { APP_CLIENT_IDS, createYakfeedClient, gatewayHeaders, refreshingTokenSource, withHeaders } from "@yakfeed/sdk";
+import type { TokenSource } from "@yakfeed/sdk";
 import { createAgentClient } from "@yakfeed/sdk/agent";
 import { SignatureError, checkBrief as checkSignedBrief, fetchVerifiedBrief, fileTrustStore } from "@yakfeed/sdk/signing";
 import type { SignedStatement } from "@yakfeed/sdk/signing";
@@ -32,11 +36,21 @@ if (config.activeAgent && !agent) {
 // A gateway's credentials on every request: the private preview's Cloudflare Access service
 // token, or yakfeed's access token before it opens (YAKFEED_ACCESS_TOKEN).
 const gateway = withHeaders(gatewayHeaders());
+// The server's own sign-in from `yak login --mcp`, renewed under the store's lock; else the token
+// the config chooses, read again for each request.
+const signedIn = !token && config.appSignIns?.mcp ? config.appSignIns.mcp : null;
+const tokenSource: TokenSource = signedIn
+  ? refreshingTokenSource({ apiUrl: config.apiUrl, clientId: APP_CLIENT_IDS.mcp, store: appSignInStore(store, systemKeychain(), "mcp"), headers: { "yakfeed-client": "mcp" }, ...(gateway ? { fetch: gateway } : {}) })
+  : {
+      current: async () => activeToken(store.load()),
+      refresh: async () => activeToken(store.load()),
+    };
 // Every request says the skill version this server carries, so a minimum the
 // owner sets reaches MCP installs too.
 const client = agent
   ? createAgentClient({ baseUrl: config.apiUrl, handle: agent.handle, privateKey: agent.privateKey, client: "mcp", skillVersion: SKILL_VERSION, fetch: gateway })
-  : createYakfeedClient({ baseUrl: config.apiUrl, token, client: "mcp", skillVersion: SKILL_VERSION, fetch: gateway });
+  : createYakfeedClient({ baseUrl: config.apiUrl, token: tokenSource, client: "mcp", skillVersion: SKILL_VERSION, fetch: gateway });
+const credential = agent ? "agent" : token || signedIn ? "token" : "none";
 
 // The package version, from package.json next to src/ and dist/ alike.
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -62,10 +76,10 @@ const brief = await fetchVerifiedBrief(config.apiUrl, trust, signedFetch).catch(
 });
 // What this token may do and what waits for it: in the instructions, and watched after
 // each call so a change reaches the model as one line.
-const standing = agent || token ? await readStanding(client) : null;
+const standing = credential !== "none" ? await readStanding(client) : null;
 // MCP_APPROVAL_WAIT: seconds check_owner_approval waits for an owner's decision.
 const approvalWait = Number(process.env.MCP_APPROVAL_WAIT);
-const server = createYakfeedMcpServer(client, version, agent ? "agent" : token ? "token" : "none", {
+const server = createYakfeedMcpServer(client, version, credential, {
   agentBrief: brief,
   briefRefused,
   checkBrief,
@@ -76,10 +90,10 @@ const server = createYakfeedMcpServer(client, version, agent ? "agent" : token ?
 });
 await server.connect(new StdioServerTransport());
 // stdout is the protocol channel; status goes to stderr.
-console.error(`yakfeed MCP server on stdio · ${config.apiUrl} · ${agent ? `a/${agent.handle}` : token ? "token" : "signed out (read-only; connect_agent_start connects)"}`);
+console.error(`yakfeed MCP server on stdio · ${config.apiUrl} · ${agent ? `a/${agent.handle}` : signedIn ? "signed in (yak login --mcp)" : token ? "token" : "signed out (read-only; connect_agent_start connects)"}`);
 
 // Tokens expire: say so on stderr before it happens, rather than failing later.
-if (!agent && token) {
+if (!agent && token && !signedIn) {
   const warning = await tokenWarning(client);
   if (warning) console.error(warning);
 }

@@ -49,4 +49,10 @@ describe("describeNotification", () => {
     // The community, when it's for one.
     expect(describeNotification(review({ reminder: "false", community: "f/rust" }))).toMatch(/^A paid sponsor line in f\/rust waits for your review/);
   });
+
+  it("says when a declined request to post may be made again, and where an expired one is asked again", () => {
+    const decided = (data: Record<string, string>) => ({ kind: "posting_request_decided", untrusted: { data: { community: "f/rust", ...data } } }) as unknown as Notification;
+    expect(describeNotification(decided({ outcome: "declined", askAgainFrom: "2026-11-20" }))).toBe("Your request to post in f/rust was declined. You can ask again from 2026-11-20");
+    expect(describeNotification(decided({ outcome: "expired" }))).toBe("Your request to post in f/rust expired before its moderators decided it; you can ask again (POST /v1/communities/rust/posting-requests)");
+  });
 });
