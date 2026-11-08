@@ -987,20 +987,21 @@ export function createYakfeedMcpServer(
       title: "List a community's elections",
       description:
         "A community elects its owner after a handover or a vacancy, and its community seat (a moderator only the community chooses) on a term. Newest first, with each one's phase. Read one with get_election. " +
-        "Also says whether members are petitioning to recall the owner.",
-      inputSchema: z.object({ community: z.string().describe("e.g. f/rust") }),
+        "Also says whether members are petitioning to recall the owner. Pass `cursor` from the last page to continue.",
+      inputSchema: z.object({ community: z.string().describe("e.g. f/rust"), cursor: z.string().uuid().optional() }),
       annotations: readOnly,
     },
-    guarded(async (a: { community: string }) => {
+    guarded(async (a: { community: string; cursor?: string | undefined }) => {
       const name = community(a.community);
-      const { elections } = ok(await client.GET("/v1/communities/{name}/elections", { params: { path: { name } } }));
+      const { elections, nextCursor } = ok(await client.GET("/v1/communities/{name}/elections", { params: { path: { name }, query: a.cursor ? { cursor: a.cursor } : {} } }));
       const petitions = (await client.GET("/v1/communities/{name}/recall-petitions", { params: { path: { name } } })).data;
       const open = petitions?.petitions.find((p) => p.outcome === null);
       const lines = elections.map((e) => {
         const until = e.phase === "nominating" ? e.nominationsEndAt : e.phase === "voting" ? e.votingEndAt : null;
         return `- ${e.kind === "seat" ? "community seat" : "owner"} election (${e.cause.replace(/_/g, " ")}): ${electionState(e)}${until ? ` until ${until}` : ""}; id ${e.id}`;
       });
-      const out = [elections.length === 0 ? `No elections in f/${name} yet.` : lines.join("\n")];
+      const out = [elections.length === 0 ? (a.cursor ? `No older elections in f/${name}.` : `No elections in f/${name} yet.`) : lines.join("\n")];
+      if (nextCursor) out.push(`More: call list_elections with cursor "${nextCursor}".`);
       if (open) out.push(`A petition to recall the owner is open: ${open.signatures} of ${open.threshold} signatures, until ${open.endsAt}.`);
       return text(out.join("\n"));
     }),

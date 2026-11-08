@@ -234,6 +234,30 @@ function providerWords(provider: string | undefined): string {
 
 const POLICY_NAMES: Record<string, string> = { terms: "terms of service", privacy: "privacy notice", "content-policy": "content policy", rules: "rules" };
 
+/**
+ * How a community came to its new owner (`community.owner_changed`'s cause), after "You're now the
+ * owner of f/x, ": the same words as the API's emails, for the web inbox, the CLI and the MCP tools.
+ */
+export function ownerChangeWords(cause: string | undefined): string {
+  switch (cause) {
+    case "handover":
+      return "handed over to you";
+    // Elections (version 3 of the event).
+    case "elected":
+      return "elected by its members";
+    case "appointed":
+      return "appointed by site admins after its election";
+    case "voided":
+      return "as next in line, since site admins voided its election";
+    case "deleted":
+    case "suspended":
+    case "inactive":
+    case "removed":
+      return "since its owner left and you were next in line";
+    default:
+      return "handed over by yakfeed's operators";
+  }
+}
 /** One plain-text line for a notification, for terminals and agents. */
 export function describeNotification(n: Notification): string {
   const who = n.actor?.displayHandle ?? "[deleted]";
@@ -256,11 +280,8 @@ export function describeNotification(n: Notification): string {
       if (n.untrusted.data.outcome === "approved") return `Your request for ${n.untrusted.data.community} was approved: you own it now (/${n.untrusted.data.community})`;
       if (n.untrusted.data.outcome === "denied") return `Your request for ${n.untrusted.data.community} was turned down${n.untrusted.data.reason ? ` (reason: ${n.untrusted.data.reason})` : ""}`;
       return `Your request for ${n.untrusted.data.community} expired before a site admin decided it; you can ask again (/communities/new)`;
-    case "community_owner_changed": {
-      const cause = n.untrusted.data.cause;
-      const how = cause === "handover" ? "handed over to you" : cause && cause !== "operator" ? "since its owner left and you were next in line" : "handed over by yakfeed's operators";
-      return `You're now the owner of ${n.untrusted.data.community}, ${how}. New owners serve a probation with limited powers first (/${n.untrusted.data.community}/mod)`;
-    }
+    case "community_owner_changed":
+      return `You're now the owner of ${n.untrusted.data.community}, ${ownerChangeWords(n.untrusted.data.cause)}. New owners serve a probation with limited powers first (/${n.untrusted.data.community}/mod)`;
     // Who runs a community: an offer to take one over, a reminder to an idle owner, a site admin's warning.
     case "community_handover_offered":
       return `${n.untrusted.data.by === "site_admins" ? "Site admins offer" : "The owner offers"} you ${n.untrusted.data.community}: accept or decline it on /${n.untrusted.data.community}/handover (POST /v1/communities/{name}/handover/accept or /decline)`;

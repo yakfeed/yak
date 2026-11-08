@@ -5,6 +5,7 @@ export const LIST_LIMITS: Readonly<Record<string, { readonly max: number; readon
   "GET /v1/amas": { max: 50 },
   "GET /v1/best": { max: 100, default: 25 },
   "GET /v1/communities/{name}/amas": { max: 50 },
+  "GET /v1/communities/{name}/elections": { max: 25 },
   "GET /v1/communities/{name}/posts": { max: 100, default: 25 },
   "GET /v1/feed": { max: 100, default: 25 },
   "GET /v1/jobs": { max: 50 },

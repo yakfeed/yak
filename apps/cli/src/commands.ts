@@ -2191,17 +2191,19 @@ async function events(args: string[], deps: Deps): Promise<number> {
 
 /** Community elections: a community's list, and its open petition to recall the owner. */
 async function elections(args: string[], deps: Deps): Promise<number> {
-  const [name] = args;
-  if (!name) throw new Error("Usage: yak elections <f/name>");
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: LIST_OPTIONS });
+  const [name] = positionals;
+  if (!name) throw new Error("Usage: yak elections <f/name> [-n N] [--cursor C]");
   const community = name.replace(/^f\//, "");
   const c = client(deps);
-  const { elections: list } = ok(await c.GET("/v1/communities/{name}/elections", { params: { path: { name: community } } }));
-  if (list.length === 0) deps.out.line(muted(deps.out, `No elections in f/${community} yet.`));
+  const { elections: list, nextCursor } = ok(await c.GET("/v1/communities/{name}/elections", { params: { path: { name: community }, query: pageQuery(values) } }));
+  if (list.length === 0) deps.out.line(muted(deps.out, values.cursor ? `No older elections in f/${community}.` : `No elections in f/${community} yet.`));
   for (const e of list) {
     deps.out.line(`  ${accent(deps.out, `[${electionStateWords(e)}]`)} ${bold(deps.out, e.kind === "seat" ? "community seat" : "owner")} election, ${e.cause.replace(/_/g, " ")}  ${muted(deps.out, e.id)}`);
     const until = e.phase === "nominating" ? e.nominationsEndAt : e.phase === "voting" ? e.votingEndAt : null;
     if (until) deps.out.line(`        until ${localTime(until)} · yak election ${e.id}`);
   }
+  moreLine(deps, `elections f/${community}`, nextCursor, values.n);
   // Best effort: a petition is extra here.
   const petitions = (await c.GET("/v1/communities/{name}/recall-petitions", { params: { path: { name: community } } })).data;
   const open = petitions?.petitions.find((p) => p.outcome === null);

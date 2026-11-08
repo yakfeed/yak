@@ -5,7 +5,7 @@
 // A refresh holds a lock file next to the config, so two commands at once don't both refresh.
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, openSync, readFileSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
 import type { AppSignIn, SignInStore } from "@yakfeed/sdk";
 import type { ConfigStore } from "./config.js";
 
@@ -113,19 +113,26 @@ export async function withLockFile<T>(path: string, fn: () => Promise<T>, sleep 
     try {
       const fd = openSync(path, "wx", 0o600);
       try {
-        writeSync(fd, nonce);
-      } catch (error) {
-        // A full disk, say: the empty lock would hold every other refresh up until it went stale.
+        // writeFileSync on a descriptor writes it all, where one writeSync may write part.
+        writeFileSync(fd, nonce);
         closeSync(fd);
+      } catch (error) {
+        // A full disk, say: the empty or partial lock would hold every other refresh up until it went stale.
+        try {
+          closeSync(fd);
+        } catch {
+          // Already closed, or the close is what failed.
+        }
         rmSync(path, { force: true });
         throw error;
       }
-      closeSync(fd);
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (existsSync(path) && Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS) rmSync(path, { force: true });
-      else if (waited >= LOCK_WAIT_MAX_MS) throw new Error(`Another yak is refreshing the sign-in (${path}). If none is running, delete that file and try again.`, { cause: error });
+      const seen = statSync(path, { throwIfNoEntry: false });
+      // Broken: take it at once. Otherwise (fresh, or another waiter is breaking it) wait a step.
+      if (seen && isStale(seen) && breakStaleLock(path)) continue;
+      if (waited >= LOCK_WAIT_MAX_MS) throw new Error(`Another yak is refreshing the sign-in (${path}). If none is running, delete that file (and ${path}.break, if it is there) and try again.`, { cause: error });
       else await sleep(LOCK_WAIT_STEP_MS);
     }
   }
@@ -133,6 +140,36 @@ export async function withLockFile<T>(path: string, fn: () => Promise<T>, sleep 
     return await fn();
   } finally {
     if (ownsLock(path, nonce)) rmSync(path, { force: true });
+  }
+}
+
+const isStale = (lock: Stats) => Date.now() - lock.mtimeMs > LOCK_STALE_MS;
+
+/**
+ * Breaks a stale lock under a second lock, `<path>.break`, which one waiter holds at a time: it
+ * looks at the lock again and removes it only if it's still stale. Two waiters can both judge one
+ * lock stale; the second, once the first is done, finds the first's new lock fresh and leaves it,
+ * so a lock younger than LOCK_STALE_MS is never removed. A breaker that died holding `.break`
+ * leaves one that goes stale too, and is removed the same way. True when it removed the lock.
+ * Exported for tests.
+ */
+export function breakStaleLock(path: string): boolean {
+  const breaking = `${path}.break`;
+  try {
+    closeSync(openSync(breaking, "wx", 0o600));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const left = statSync(breaking, { throwIfNoEntry: false });
+    if (left && isStale(left)) rmSync(breaking, { force: true });
+    return false; // Another waiter is breaking it; wait for the lock as usual.
+  }
+  try {
+    const seen = statSync(path, { throwIfNoEntry: false });
+    if (!seen || !isStale(seen)) return false;
+    rmSync(path, { force: true });
+    return true;
+  } finally {
+    rmSync(breaking, { force: true });
   }
 }
 

@@ -60,6 +60,17 @@ describe("describeNotification", () => {
     expect(describeNotification(result)).toBe("f/rust's election closed (too few ballots): GET /v1/elections/e1");
   });
 
+  it("says how a community came to its new owner, an election's causes included", () => {
+    const changed = (cause?: string) =>
+      describeNotification({ kind: "community_owner_changed", untrusted: { data: { community: "f/rust", ...(cause ? { cause } : {}) } } } as unknown as Notification);
+    expect(changed("elected")).toBe("You're now the owner of f/rust, elected by its members. New owners serve a probation with limited powers first (/f/rust/mod)");
+    expect(changed("appointed")).toMatch(/^You're now the owner of f\/rust, appointed by site admins after its election\./);
+    expect(changed("voided")).toMatch(/, as next in line, since site admins voided its election\./);
+    expect(changed("inactive")).toMatch(/, since its owner left and you were next in line\./);
+    expect(changed("handover")).toMatch(/, handed over to you\./);
+    expect(changed()).toMatch(/, handed over by yakfeed's operators\./);
+  });
+
   it("names the agent that changed its party's ballot by the display handle it was sent", () => {
     const vote = { kind: "election_party_vote", untrusted: { data: { community: "f/rust", electionId: "e1", what: "nominations", by: "a/voter0-bot" } } } as unknown as Notification;
     expect(describeNotification(vote)).toBe("a/voter0-bot changed your party's nominations in f/rust's election. Your party has one vote");

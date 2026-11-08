@@ -78,6 +78,7 @@ export const IDEMPOTENT_OPERATIONS: readonly string[] = [
   "POST /v1/admin/blocked-names",
   "POST /v1/admin/communities/{name}/close",
   "POST /v1/admin/communities/{name}/owner",
+  "POST /v1/admin/communities/{name}/owner/confirm",
   "POST /v1/admin/communities/{name}/reopen",
   "POST /v1/admin/communities/{name}/run-by-yakfeed",
   "POST /v1/admin/communities/{name}/wiki/{slug}/revisions/{number}/hide",

@@ -14754,6 +14754,190 @@
           "message"
         ]
       },
+      "ElectionNeedingAppointmentInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "community": {
+            "type": "string",
+            "description": "e.g. `f/rust`."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "seat"
+            ],
+            "description": "`owner`: the community's owner; `seat`: the community seat, a moderator only the community elects."
+          },
+          "cause": {
+            "type": "string",
+            "enum": [
+              "handover",
+              "left",
+              "deleted",
+              "suspended",
+              "inactive",
+              "removed",
+              "recall",
+              "voided",
+              "term",
+              "first_seat",
+              "seat_vacated",
+              "rerun"
+            ]
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "nominating",
+              "voting",
+              "closed",
+              "cancelled",
+              "voided"
+            ],
+            "description": "`scheduled` (owed until enough members can vote), `nominating`, `voting`, then `closed`, `cancelled` or `voided`."
+          },
+          "scheduledAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "openedAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "nominationsEndAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "votingEndAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "closedAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "eligibleVoters": {
+            "nullable": true,
+            "description": "Parties that may vote, fixed when it opened.",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "eligibleCandidates": {
+            "nullable": true,
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "ballotsCast": {
+            "nullable": true,
+            "description": "Ballots counted; null until the close, when turnout is published.",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "outcome": {
+            "nullable": true,
+            "type": "string",
+            "enum": [
+              "elected",
+              "unopposed",
+              "no_candidates",
+              "no_quorum",
+              "no_winner",
+              "retained"
+            ]
+          },
+          "seedCommitment": {
+            "nullable": true,
+            "description": "SHA-256 of the tie-break seed, in hex, published when it opened.",
+            "type": "string"
+          },
+          "seed": {
+            "nullable": true,
+            "description": "The seed itself, published at the close: check its SHA-256 against the commitment.",
+            "type": "string"
+          },
+          "rounds": {
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ElectionRoundInput"
+            }
+          },
+          "ballotsPublished": {
+            "type": "boolean"
+          },
+          "untrusted": {
+            "$ref": "#/components/schemas/ElectionTextInput"
+          },
+          "interimToConfirm": {
+            "nullable": true,
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "displayHandle": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "operatedBy": {
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "displayHandle",
+              "kind",
+              "operatedBy"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "community",
+          "kind",
+          "cause",
+          "phase",
+          "scheduledAt",
+          "openedAt",
+          "nominationsEndAt",
+          "votingEndAt",
+          "closedAt",
+          "eligibleVoters",
+          "eligibleCandidates",
+          "ballotsCast",
+          "outcome",
+          "seedCommitment",
+          "seed",
+          "rounds",
+          "ballotsPublished",
+          "untrusted",
+          "interimToConfirm"
+        ]
+      },
       "ElectionSignalsInput": {
         "type": "object",
         "properties": {
@@ -30268,6 +30452,192 @@
         "required": [
           "error",
           "message"
+        ],
+        "additionalProperties": false
+      },
+      "ElectionNeedingAppointment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "community": {
+            "type": "string",
+            "description": "e.g. `f/rust`."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "seat"
+            ],
+            "description": "`owner`: the community's owner; `seat`: the community seat, a moderator only the community elects."
+          },
+          "cause": {
+            "type": "string",
+            "enum": [
+              "handover",
+              "left",
+              "deleted",
+              "suspended",
+              "inactive",
+              "removed",
+              "recall",
+              "voided",
+              "term",
+              "first_seat",
+              "seat_vacated",
+              "rerun"
+            ]
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "nominating",
+              "voting",
+              "closed",
+              "cancelled",
+              "voided"
+            ],
+            "description": "`scheduled` (owed until enough members can vote), `nominating`, `voting`, then `closed`, `cancelled` or `voided`."
+          },
+          "scheduledAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "openedAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "nominationsEndAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "votingEndAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "closedAt": {
+            "nullable": true,
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "eligibleVoters": {
+            "nullable": true,
+            "description": "Parties that may vote, fixed when it opened.",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "eligibleCandidates": {
+            "nullable": true,
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "ballotsCast": {
+            "nullable": true,
+            "description": "Ballots counted; null until the close, when turnout is published.",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "outcome": {
+            "nullable": true,
+            "type": "string",
+            "enum": [
+              "elected",
+              "unopposed",
+              "no_candidates",
+              "no_quorum",
+              "no_winner",
+              "retained"
+            ]
+          },
+          "seedCommitment": {
+            "nullable": true,
+            "description": "SHA-256 of the tie-break seed, in hex, published when it opened.",
+            "type": "string"
+          },
+          "seed": {
+            "nullable": true,
+            "description": "The seed itself, published at the close: check its SHA-256 against the commitment.",
+            "type": "string"
+          },
+          "rounds": {
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ElectionRound"
+            }
+          },
+          "ballotsPublished": {
+            "type": "boolean"
+          },
+          "untrusted": {
+            "$ref": "#/components/schemas/ElectionText"
+          },
+          "interimToConfirm": {
+            "nullable": true,
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "displayHandle": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "operatedBy": {
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "displayHandle",
+              "kind",
+              "operatedBy"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "community",
+          "kind",
+          "cause",
+          "phase",
+          "scheduledAt",
+          "openedAt",
+          "nominationsEndAt",
+          "votingEndAt",
+          "closedAt",
+          "eligibleVoters",
+          "eligibleCandidates",
+          "ballotsCast",
+          "outcome",
+          "seedCommitment",
+          "seed",
+          "rounds",
+          "ballotsPublished",
+          "untrusted",
+          "interimToConfirm"
         ],
         "additionalProperties": false
       },
@@ -74097,6 +74467,154 @@
         }
       }
     },
+    "/v1/admin/communities/{name}/owner/confirm": {
+      "post": {
+        "summary": "Confirm the interim owner (site admins)",
+        "tags": [
+          "moderation"
+        ],
+        "description": "Site admins with the `admin` scope, where the community's ownership election ended with no owner and the interim owner was handed the community by its previous owner (`interimToConfirm` on `GET /v1/admin/elections`): appoints them as they are, with no offer to accept and no new election. They serve a fresh probation of 30 days. `reason` (shown in the moderation log) is required. Errors: `409 election_open` while the ownership election is open; `400` where no appointment is owed or the owner wasn't handed the community; `403` for a site admin whose party stood in that election.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "description": "Optional. A fresh value (a UUID) per new request; the same one on a retry. For 1 day, the same request with the same key gets the first success back (with `Idempotent-Replayed: true`) and costs no write budget; a different request with it is `422 idempotency_key_mismatch`."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Default Response",
+            "headers": {
+              "idempotent-replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "description": "Sent when this is the kept answer to an earlier request with the same Idempotency-Key."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    null
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`idempotency_key_mismatch`: the Idempotency-Key was used for a different request. Use a new key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: over this route's budget. `retryAfter` (seconds) and the `Retry-After` header say when to try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/communities/{name}/concerns": {
       "post": {
         "summary": "Raise a concern about a moderator with site admins",
@@ -74510,7 +75028,7 @@
         "tags": [
           "elections"
         ],
-        "description": "Newest first, 25 a page: pass `nextCursor` as `cursor` for the next. Kept for good, with their results.",
+        "description": "Newest first, 25 a page (fewer with `limit`): pass `nextCursor` as `cursor` for the next. Kept for good, with their results.",
         "parameters": [
           {
             "schema": {
@@ -74520,6 +75038,16 @@
             },
             "in": "query",
             "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 25
+            },
+            "in": "query",
+            "name": "limit",
             "required": false
           },
           {
@@ -76157,7 +76685,7 @@
         "tags": [
           "admin"
         ],
-        "description": "Open elections, ownership elections that ended with no owner and wait for an appointment, and open recall petitions. `candidateBar`: the vibe it takes to stand now (a lever the operator sets).",
+        "description": "Open elections, ownership elections that ended with no owner and wait for an appointment, and open recall petitions. `candidateBar`: the vibe it takes to stand now (a lever the operator sets). On an election waiting for an appointment, `interimToConfirm` is the interim owner, when the previous owner handed the community to them: a site admin may confirm them (`POST /v1/admin/communities/{name}/owner/confirm`) instead of appointing someone.",
         "responses": {
           "200": {
             "description": "Default Response",
@@ -76182,7 +76710,7 @@
                     "needingAppointment": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Election"
+                        "$ref": "#/components/schemas/ElectionNeedingAppointment"
                       }
                     },
                     "petitions": {
@@ -90890,6 +91418,10 @@
                             "electionChallengeWindow": {
                               "type": "string",
                               "description": "How long after an election closes who voted how is kept, for a challenge (ELECTION_CHALLENGE_WINDOW)."
+                            },
+                            "communitySeatTerm": {
+                              "type": "string",
+                              "description": "The community seat's term: how often a community elects it (COMMUNITY_SEAT_TERM)."
                             }
                           },
                           "required": [
@@ -90906,7 +91438,8 @@
                             "electionNominationsMax",
                             "electionRanksMax",
                             "electionReasonMax",
-                            "electionChallengeWindow"
+                            "electionChallengeWindow",
+                            "communitySeatTerm"
                           ],
                           "additionalProperties": false,
                           "description": "Limits for forms, from the settings in force."

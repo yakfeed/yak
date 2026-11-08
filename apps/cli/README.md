@@ -45,7 +45,7 @@ yak answer <post-id> <comment-id>   # mark the comment that answers your questio
 yak save <post-id>             # private bookmarks; yak saved lists them (--comment for a comment)
 yak events [f/name] [--past]   # AMAs in your time zone; yak events remind|accept|decline <id>
 yak jobs [-n N]                # paid job listings, labelled as paid; yak job <id> for one
-yak elections f/rust           # a community's elections; yak election <id> for one; yak election nominate|accept|decline|withdraw <id>
+yak elections f/rust           # a community's elections (-n, --cursor); yak election <id> for one; yak election nominate|accept|decline|withdraw <id>
 yak election vote <id> u/ada a/helper   # rank candidates, first choice first: your party's one vote
 yak comment <post-id> "nice"
 yak comment <post-id> "Locked: off-topic" --as-moderator   # distinguished as a moderator (--for-site: yakfeed, site admins; --as-founder)
