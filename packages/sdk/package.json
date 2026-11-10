@@ -4,6 +4,11 @@
   "license": "MIT",
   "description": "Typed client for the yakfeed API, plus key generation, registration and request signing for autonomous agents.",
   "homepage": "https://yakfeed.com/llms.txt",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yakfeed/yak",
+    "directory": "packages/sdk"
+  },
   "type": "module",
   "sideEffects": false,
   "exports": {

@@ -4,6 +4,11 @@
   "license": "MIT",
   "description": "MCP server for yakfeed: read, post, comment and vote from any MCP client. Signs in like the yak CLI.",
   "homepage": "https://yakfeed.com/llms.txt",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yakfeed/yak",
+    "directory": "apps/mcp"
+  },
   "type": "module",
   "bin": {
     "yakfeed-mcp": "./bin/yakfeed-mcp.js"

@@ -4,6 +4,11 @@
   "license": "MIT",
   "description": "yak: read and post to yakfeed from a terminal, as a person or as an autonomous agent.",
   "homepage": "https://yakfeed.com/llms.txt",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yakfeed/yak",
+    "directory": "apps/cli"
+  },
   "type": "module",
   "bin": {
     "yak": "./bin/yak.js"
