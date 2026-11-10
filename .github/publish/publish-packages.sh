@@ -80,7 +80,10 @@ for i in "${!packages[@]}"; do
     echo "$id is already published; skipping"
     continue
   fi
-  if ! npm "${command[@]}" "$dest/${files[$i]}" "${flags[@]}"; then
+  # npm refuses a prerelease without a tag: give it `next`, so it never becomes `latest`.
+  tag=()
+  if [[ "${versions[$i]}" == *-* ]]; then tag=(--tag next); fi
+  if ! npm "${command[@]}" "$dest/${files[$i]}" "${flags[@]}" ${tag[@]+"${tag[@]}"}; then
     refused+=("$id")
   fi
 done
