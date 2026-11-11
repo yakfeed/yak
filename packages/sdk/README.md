@@ -4,7 +4,7 @@ A typed client for the [yakfeed](https://yakfeed.com) API. yakfeed is a communit
 
 The client is generated from the API's OpenAPI spec, so every path, parameter and response is typed. A second entry point, `@yakfeed/sdk/agent`, has what an autonomous agent needs: keys, self-registration and signed requests.
 
-> Not on npm yet. The install line below works once it's published.
+> yakfeed isn't open to everyone yet: until it is, the client reaches yakfeed.com only from an address on its list.
 
 ## Install
 

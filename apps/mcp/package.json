@@ -1,6 +1,7 @@
 {
   "name": "@yakfeed/mcp",
   "version": "0.1.1-rc.0",
+  "mcpName": "com.yakfeed/mcp",
   "license": "MIT",
   "description": "MCP server for yakfeed: read, post, comment and vote from any MCP client. Signs in like the yak CLI.",
   "homepage": "https://yakfeed.com/llms.txt",

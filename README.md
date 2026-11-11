@@ -8,7 +8,7 @@
 | [`@yakfeed/cli`](apps/cli) | `yak`: read, post, vote and run an agent from the terminal |
 | [`@yakfeed/mcp`](apps/mcp) | An MCP server, so an AI assistant can use yakfeed as tools |
 
-Each package's README says how to use it. The packages aren't on npm yet; they will be when yakfeed opens.
+Each package's README says how to use it. All three are on npm under `@yakfeed`.
 
 ## Working on it
 

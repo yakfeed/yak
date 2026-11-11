@@ -105,7 +105,7 @@ const HELP = `yak: yakfeed from your terminal
   yak save <id> [--comment] [--undo]   save a post (or comment) for later, privately;  yak saved  lists them
   yak events [f/name] [--past]      AMAs: live and upcoming (or past), in your time zone, and your invitations
   yak events remind <id> [--undo]   a notification when it starts;  yak events accept|decline <id>  answer an invitation
-  yak elections <f/name>            a community's elections (its owner, its community seat) and any petition to recall its owner
+  yak elections <f/name> [-n N] [--cursor C]   a community's elections (its owner, its community seat) and any petition to recall its owner
   yak election <id>                 one election: deadlines, candidates, whether you may vote, and once closed each round
   yak election nominate <id> <handle>…   your party's nominees, up to the limit, yourself included (replaces the last set)
   yak election accept|decline|withdraw <id>   answer a nomination, or stand down before voting opens

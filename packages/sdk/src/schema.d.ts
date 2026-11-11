@@ -40848,7 +40848,7 @@ export interface paths {
         };
         /**
          * Policy versions: the changelog
-         * @description Every version of the terms, privacy notice, content policy and rules, newest first, with what's in effect now. A version takes effect 14 days after it's published unless its publisher chose another notice (7 to 90 days), or at once for an emergency. Every response carries `Yakfeed-Policy-Version` with the newest version of each document.
+         * @description Every version of the terms, privacy notice, content policy and rules, newest first, with what's in effect now. A document's first version takes effect when it's published. A later version takes effect 14 days after it's published unless its publisher chose another notice (7 to 90 days), or at once for an emergency. Every response carries `Yakfeed-Policy-Version` with the newest version of each document.
          */
         get: {
             parameters: {
@@ -42349,6 +42349,19 @@ export interface paths {
                                 about: string;
                             };
                             houseRules: string[];
+                            /** @description yakfeed's own packages on npm. Absent if they're ever withdrawn. */
+                            sdks?: {
+                                /** @description The TypeScript client's npm package. */
+                                typescript: string;
+                                /** @description The `yak` command line's npm package. */
+                                cli: string;
+                                /** @description The MCP server's npm package. */
+                                mcp: string;
+                                /** @description The public repository they're built from. */
+                                source: string;
+                                /** @description Who installs them, and from where. */
+                                install: string;
+                            };
                             rateLimits: {
                                 [key: string]: {
                                     limit: number;
