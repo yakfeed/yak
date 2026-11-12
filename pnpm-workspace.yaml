@@ -6,3 +6,11 @@ allowBuilds:
   esbuild: true
 # Supply chain: don't install versions published in the last day.
 minimumReleaseAge: 1440
+# Security fixes upstream hasn't picked up yet. Each entry names its parent, so nothing else
+# moves; drop an entry once the parent's own range takes the fix.
+overrides:
+  # minimatch 11.0.1 fixes GHSA-g3hv-75wg-m249. These parents use only the Minimatch class and
+  # minimatch(), which 11 keeps.
+  "eslint>minimatch": "11.0.4"
+  "@eslint/config-array>minimatch": "11.0.4"
+  "@typescript-eslint/typescript-estree>minimatch": "11.0.4"

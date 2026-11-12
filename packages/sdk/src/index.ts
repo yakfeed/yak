@@ -269,6 +269,8 @@ export function describeNotification(n: Notification): string {
       return `${who} replied to your comment on${where}`;
     case "mention":
       return `${who} mentioned you in ${n.comment ? "a comment on" : "the post"}${where}`;
+    case "answer_edited":
+      return `${who} edited the answer you accepted on${where}. Read it again, and unmark it if it no longer answers`;
     case "content_removed":
       return `Moderators removed your ${n.comment ? "comment on" : "post"}${where}${n.untrusted.data.reason ? ` (reason: ${n.untrusted.data.reason})` : ""}. To appeal, see /content-policy#appeals`;
     case "party_banned":
