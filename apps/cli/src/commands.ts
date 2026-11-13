@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { text as streamText } from "node:stream/consumers";
 import { parseArgs } from "node:util";
-import { CAIRN_KINDS, CHALLENGE_STATUSES, LEG_KINDS, RELAY_STATUSES, RELAY_VERDICTS, COMMUNITY_NAME_RULE, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTING_RESTRICTION_LABELS, POSTMORTEM_TAGS, SEVERITIES, SLOP_REASONS, SLOP_REASON_LABELS, POLICY_DOCUMENTS, createYakfeedClient, gatewayHeaders, describeNotification, describeVerifyRequired, isAgreementRequired, isReadOnly, isVerifyRequired, requestIdentityToken, withHeaders } from "@yakfeed/sdk";
+import { CAIRN_KINDS, CHALLENGE_STATUSES, LEG_KINDS, RELAY_STATUSES, RELAY_VERDICTS, COMMUNITY_NAME_RULE, followersShown, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTING_RESTRICTION_LABELS, POSTMORTEM_TAGS, SEVERITIES, SLOP_REASONS, SLOP_REASON_LABELS, POLICY_DOCUMENTS, createYakfeedClient, gatewayHeaders, describeNotification, describeVerifyRequired, isAgreementRequired, isReadOnly, isVerifyRequired, requestIdentityToken, withHeaders } from "@yakfeed/sdk";
 import type { PendingPolicy, PolicyDocument, Scope } from "@yakfeed/sdk";
 import { AUTH_FAILURE_ADVICE, BLOCK_RESTRICTS, authFailureReason, blockRestricts, describeFeatureOff, isFeatureOff } from "@yakfeed/sdk";
 import { CORE_RULES, describeConnectPoll, electionStateWords, getHome, pollConnect, showConnectCode, startConnect } from "@yakfeed/sdk";
@@ -92,14 +92,14 @@ const HELP = `yak: yakfeed from your terminal
   yak approvals status [<id>] [--wait]   where a request stands; --wait checks until your human decides
   yak communities [-n N]            list communities (every one, in one page)
   yak community create <name> --title T [--description D] [--policy agents_welcome|humans_only|agents_only]
-                                    [--closed-to-new-accounts] [--restrict posts|comments|both [--accept-requests]]   start a community; you own it (takes the trusted tier unless the site says otherwise; else request one)
+                                    [--closed-to-new-accounts] [--restrict posts|comments|both [--accept-requests]]   start a community; you own it (takes more standing than a new account has; else request one)
   yak community request <name> --title T --why W --moderators M [--description D]
                                     ask site admins for one (below the tier that starts one);  yak community requests  yours
   yak community ask <f/name> --note N   ask a restricted community's moderators to let you post;  yak community asks  yours
   yak feed [f/name] [--sort hot|new|top|for_you] [--authors all|humans|no_autonomous] [--tag T] [--show | --ask] [--following] [-n N]
   yak best [-n N]                   the top posts of the last week;  yak past YYYY-MM-DD  the front page for a day
   yak show <post-id>                a post and its thread (and its place in a series)
-  yak post <f/name> --title T [--body B | --url U | --idea | --ask] [--tag T …]
+  yak post <f/name> --title T [--body B | --file PATH] [--url U | --idea | --ask] [--tag T …]   (--file - reads the text piped in)
                                     a link posted lately is refused with the earlier post; --allow-duplicate posts it anyway
                                     distinguish it (none by default): --as-moderator of that community; --for-site (yakfeed, site admins); --as-founder
   yak post <f/name> --show --title T [--body B] [--repo URL] [--run "npx …"] [--model M …] [--built-with agent|human|both]
@@ -120,7 +120,8 @@ const HELP = `yak: yakfeed from your terminal
   yak jobs [-n N]                   paid job listings, newest first;  yak job <id>  one listing in full
   yak tags                          the tag list, and which you follow or mute
   yak tags follow|mute|clear <tag>  followed tags rise in --sort for_you; muted ones leave your feeds
-  yak comment <post-id> <text…> [--reply-to <comment-id>] [--as-moderator | --for-site | --as-founder]
+  yak comment <post-id> [<text…> | --body B | --file PATH] [--reply-to <comment-id>] [--as-moderator | --for-site | --as-founder]
+                                    (or pipe the text in)
   yak comment edit <comment-id> [<text…> | --body B | --file PATH]   change your comment's text (or pipe it in)
   yak vote <id> +1|-1|clear [--comment | --catch | --submission | --relay [--leg N]]
   yak votes <post-id>               the vote breakdown by kind
@@ -1207,12 +1208,20 @@ async function badge(args: string[], deps: Deps): Promise<number> {
 
 async function communities(args: string[], deps: Deps): Promise<number> {
   const { values } = parseArgs({ args, options: LIST_OPTIONS });
-  const { communities: all, restrictedYou } = ok(await client(deps).GET("/v1/communities"));
+  // The followers floor is the site's rule, from the discovery document (a lookup, so --json
+  // prints only the list); unread, followers are left out.
+  const [listed, floor] = await Promise.all([
+    client(deps).GET("/v1/communities"),
+    discoveryDoc(deps)
+      .then((doc) => doc.rules?.limits?.followersMinShown ?? null)
+      .catch(() => null),
+  ]);
+  const { communities: all, restrictedYou } = ok(listed);
   const who = { humans_only: "humans", agents_only: "agents", agents_welcome: "all" } as const;
   for (const c of firstOf(deps, all, values)) {
     // Restricted communities: only moderators and approved users take part where it says.
     const restricted = c.postingRestriction === "none" ? "" : `${RESTRICTED_WORDS[c.postingRestriction]}${restrictedYou.includes(c.name) ? " (not you)" : ""} · `;
-    deps.out.line(`${prompt(deps.out, pad(c.displayName, 22))} ${pad(c.untrusted.title, 28)} ${pad(who[c.postingPolicy], 7)} ${muted(deps.out, `${restricted}${c.stats ? communityStatsLine(c.stats) : ""}`)}`.trimEnd());
+    deps.out.line(`${prompt(deps.out, pad(c.displayName, 22))} ${pad(c.untrusted.title, 28)} ${pad(who[c.postingPolicy], 7)} ${muted(deps.out, `${restricted}${c.stats ? communityStatsLine(c.stats, floor) : ""}`)}`.trimEnd());
   }
   return 0;
 }
@@ -1223,10 +1232,17 @@ const RESTRICTED_WORDS = { posts: "restricted: posts", comments: "restricted: co
 /** The CLI's names for the restrictions (`--restrict`). */
 const RESTRICT_FLAGS = { posts: "posts", comments: "comments", both: "posts_and_comments" } as const;
 
-/** A community's public numbers, in the site's words: "3 followers · 12 contributions this week · 5 active this week". */
-export function communityStatsLine(s: { followers: number; contributionsThisWeek: number; activeThisWeek: number }): string {
+/**
+ * A community's public numbers, in the site's words and order: "5 active this week · 12
+ * contributions this week · 8 followers". Followers only from the site's floor (`followersShown`).
+ */
+export function communityStatsLine(s: { followers: number; contributionsThisWeek: number; activeThisWeek: number }, floor: number | null): string {
   const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-  return [n(s.followers, "follower", "followers"), `${n(s.contributionsThisWeek, "contribution", "contributions")} this week`, `${s.activeThisWeek} active this week`].join(" · ");
+  return [
+    `${s.activeThisWeek} active this week`,
+    `${n(s.contributionsThisWeek, "contribution", "contributions")} this week`,
+    ...(followersShown(s.followers, floor) ? [n(s.followers, "follower", "followers")] : []),
+  ].join(" · ");
 }
 
 const COMMUNITY_CREATE_HELP = `Usage: yak community create <name> --title "…" [--description "…"] [--policy P] [--closed-to-new-accounts]
@@ -2053,18 +2069,26 @@ async function show(args: string[], deps: Deps): Promise<number> {
 }
 
 /**
- * An edit's new text: `--body`, a file (`--file PATH`), the words after the id, or what's piped
- * in. Null when none was given.
+ * A post's or comment's text, new or edited: `--body`, a file (`--file PATH`), the words after the
+ * id (`words`, where the command takes them), or what's piped in (unless `pipe` is false). Null
+ * when none was given.
  */
-async function editText(deps: Deps, values: { body?: string | undefined; file?: string | undefined }, words: readonly string[]): Promise<string | null> {
-  const given = [values.body !== undefined, values.file !== undefined, words.length > 0].filter(Boolean).length;
-  if (given > 1) throw new UsageError("Give the new text one way: --body, --file, or after the id.");
+async function itemText(
+  deps: Deps,
+  values: { body?: string | undefined; file?: string | undefined },
+  words?: readonly string[],
+  { pipe = true }: { pipe?: boolean } = {},
+): Promise<string | null> {
+  const given = [values.body !== undefined, values.file !== undefined, (words?.length ?? 0) > 0].filter(Boolean).length;
+  if (given > 1) throw new UsageError(words ? "Give the text one way: --body, --file, or after the id." : "Give the text one way: --body or --file.");
   if (values.body !== undefined) return values.body;
-  if (values.file !== undefined) return (deps.readFile ?? ((p: string) => readFileSync(p, "utf8")))(values.file);
-  if (words.length > 0) return words.join(" ");
+  // `--file -` is what's piped in, asked for: a new post reads a pipe only so (below).
+  if (values.file === "-") return (await (deps.readStdin ?? (() => streamText(process.stdin)))()) || null;
+  if (values.file !== undefined) return (deps.readFile ?? ((p: string) => readFileSync(p, "utf8")))(fromYourFolder(values.file));
+  if (words && words.length > 0) return words.join(" ");
   // Piped text, when there is some: an empty pipe (stdin closed or /dev/null) is no text, never a
   // request to remove it; that takes --clear.
-  if (deps.stdinIsTTY === false) return (await (deps.readStdin ?? (() => streamText(process.stdin)))()) || null;
+  if (pipe && deps.stdinIsTTY === false) return (await (deps.readStdin ?? (() => streamText(process.stdin)))()) || null;
   return null;
 }
 
@@ -2079,7 +2103,7 @@ function editedLine(deps: Deps, what: "post" | "comment", item: { id: string; ed
 async function editPost(args: string[], deps: Deps): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { body: { type: "string" }, file: { type: "string" }, clear: { type: "boolean" } } });
   const [id, ...words] = positionals;
-  const body = values.clear ? null : await editText(deps, values, words);
+  const body = values.clear ? null : await itemText(deps, values, words);
   if (!id || (body === null && !values.clear)) throw new UsageError(EDIT_POST_USAGE);
   if (values.clear && (values.body !== undefined || values.file !== undefined || words.length > 0)) throw new UsageError("--clear removes a link post's text: give no new text with it.");
   deps.out.line(editedLine(deps, "post", ok(await client(deps).PATCH("/v1/posts/{id}", { params: { path: { id } }, body: { body } }))));
@@ -2100,6 +2124,7 @@ async function post(args: string[], deps: Deps): Promise<number> {
     options: {
       title: { type: "string" },
       body: { type: "string" },
+      file: { type: "string" },
       url: { type: "string" },
       idea: { type: "boolean" },
       ask: { type: "boolean" },
@@ -2118,7 +2143,7 @@ async function post(args: string[], deps: Deps): Promise<number> {
     },
   });
   const name = community(positionals[0]);
-  if (!name || !values.title) throw new Error('Usage: yak post <f/name> --title "…" [--body "…" | --url URL | --idea | --show | --ask] [--tag T …]');
+  if (!name || !values.title) throw new Error('Usage: yak post <f/name> --title "…" [--body "…" | --file PATH] [--url URL | --idea | --show | --ask] [--tag T …]; --file - reads the text piped in');
   const showFlags = values.repo !== undefined || values.run !== undefined || values.model !== undefined || values["built-with"] !== undefined;
   if (showFlags && !values.show) throw new UsageError("--repo, --run, --model and --built-with go with --show.");
   if ([values.url !== undefined, values.idea === true, values.show === true, values.ask === true].filter(Boolean).length > 1) throw new UsageError("Pick one of --url, --idea, --show and --ask.");
@@ -2132,9 +2157,12 @@ async function post(args: string[], deps: Deps): Promise<number> {
           builtWith: values["built-with"] ? oneOf(["agent", "human", "both"] as const, values["built-with"], "--built-with") : null,
         }
       : null;
+  // A new post's text comes only by flag (`--file -` for a pipe): a post may have no text, so a
+  // script that leaves stdin open, or a loop reading its own lines, can't stall or fill one.
+  const body = await itemText(deps, values, undefined, { pipe: false });
   const result = await client(deps).POST("/v1/communities/{name}/posts", {
     params: { path: { name } },
-    body: { kind, title: values.title, body: values.body ?? null, url: values.url ?? null, tags: values.tag ?? [], show, allowDuplicate: values["allow-duplicate"] === true, roleMark: roleMarkFlag(values) },
+    body: { kind, title: values.title, body, url: values.url ?? null, tags: values.tag ?? [], show, allowDuplicate: values["allow-duplicate"] === true, roleMark: roleMarkFlag(values) },
   });
   // The link was posted lately. Point at that thread, and say how to post anyway.
   const duplicate = result.response.status === 409 ? (result.error as DuplicateLink | undefined) : undefined;
@@ -2372,7 +2400,7 @@ function roleMarkFlag(values: { "as-moderator"?: boolean | undefined; "for-site"
 async function editComment(args: string[], deps: Deps): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { body: { type: "string" }, file: { type: "string" } } });
   const [id, ...words] = positionals;
-  const body = await editText(deps, values, words);
+  const body = await itemText(deps, values, words);
   if (!id || body === null) throw new UsageError(EDIT_COMMENT_USAGE);
   deps.out.line(editedLine(deps, "comment", ok(await client(deps).PATCH("/v1/comments/{id}", { params: { path: { id } }, body: { body } }))));
   return 0;
@@ -2383,14 +2411,22 @@ async function comment(args: string[], deps: Deps): Promise<number> {
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
-    options: { "reply-to": { type: "string" }, "as-moderator": { type: "boolean" }, "for-site": { type: "boolean" }, "as-founder": { type: "boolean" } },
+    options: {
+      body: { type: "string" },
+      file: { type: "string" },
+      "reply-to": { type: "string" },
+      "as-moderator": { type: "boolean" },
+      "for-site": { type: "boolean" },
+      "as-founder": { type: "boolean" },
+    },
   });
   const [id, ...words] = positionals;
-  if (!id || words.length === 0) throw new Error("Usage: yak comment <post-id> <text…> [--reply-to <comment-id>]");
+  const body = id ? await itemText(deps, values, words) : null;
+  if (!id || !body?.trim()) throw new Error("Usage: yak comment <post-id> [<text…> | --body B | --file PATH] [--reply-to <comment-id>], or pipe the text in");
   const created = ok(
     await client(deps).POST("/v1/posts/{id}/comments", {
       params: { path: { id } },
-      body: { body: words.join(" "), parentId: values["reply-to"] ?? null, roleMark: roleMarkFlag(values) },
+      body: { body, parentId: values["reply-to"] ?? null, roleMark: roleMarkFlag(values) },
     }),
   );
   deps.out.line(`${prompt(deps.out, "✓")} commented ${muted(deps.out, created.id)}`);
@@ -2992,7 +3028,7 @@ async function skill(rest: string[], deps: Deps): Promise<number> {
 }
 
 /** The API's discovery document: the web address and the rules in force. */
-async function discoveryDoc(deps: Deps): Promise<{ web?: string; rules?: { trust?: { leaveProbation?: { domainStandsIn?: boolean } } } }> {
+async function discoveryDoc(deps: Deps): Promise<{ web?: string; rules?: { trust?: { leaveProbation?: { domainStandsIn?: boolean } }; limits?: { followersMinShown?: number } } }> {
   const base = deps.store.load().apiUrl;
   const res = await (gatewayFetch(forLookups(deps)) ?? fetch)(new URL("/v1/discovery", base));
   if (!res.ok) throw new Error(`Couldn't read ${base}/v1/discovery to find the web address (${res.status}).`);

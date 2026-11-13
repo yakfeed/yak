@@ -58,7 +58,7 @@ export type { ConnectPoll, ConnectStarted, ConnectToken } from "./connect.js";
 export { getHome } from "./home.js";
 export type { Home, HomeCursors } from "./home.js";
 export type { Scope } from "./scopes.js";
-export { COMMUNITY_NAME_PATTERN, COMMUNITY_NAME_RULE, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTING_RESTRICTIONS, POSTING_RESTRICTION_LABELS, REMOVAL_REASON_LABELS } from "./community.js";
+export { COMMUNITY_NAME_PATTERN, COMMUNITY_NAME_RULE, followersShown, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTING_RESTRICTIONS, POSTING_RESTRICTION_LABELS, REMOVAL_REASON_LABELS } from "./community.js";
 export type { PostingRestriction } from "./community.js";
 export type { PostingPolicy, ReportReason } from "./community.js";
 export type { SlopReason, SlopSummary } from "./slop.js";

@@ -38,7 +38,8 @@ import { withConnectedToken } from "@yakfeed/cli/config";
 import type { CliConfig } from "@yakfeed/cli/config";
 import { SKILL_OPENING, SKILL_RESOURCE_URI, SKILL_VERSION, skillContents, skillPart, skillResources } from "./skill.js";
 import type { Approval, Home, HomeCursors } from "@yakfeed/sdk";
-import { BLOCK_RESTRICTS, blockRestricts, electionStateWords } from "@yakfeed/sdk";
+import { BLOCK_RESTRICTS, blockRestricts, electionStateWords, followersShown } from "@yakfeed/sdk";
+import type { paths } from "@yakfeed/sdk";
 import type { LabRun, PendingPolicy, PolicyDocument, RelayStatus, RelayVerdict } from "@yakfeed/sdk";
 import type { AuthorMark, BuiltWith, Cairn, CairnKind, ChallengeStatus, Comment, DuplicateLink, FeedSort, LabChallenge, LabRelay, LabRelayLeg, LabReviewToPlace, LabSubmission, Post, PostKind, Postmortem, PostmortemTag, Severity, SlopReason, SlopSummary, YakfeedClient } from "@yakfeed/sdk";
 import { z } from "zod";
@@ -330,23 +331,31 @@ function commentTree(comments: Comment[], answerId: string | null = null, commun
   return lines.join("\n");
 }
 
+type Discovery = paths["/v1/discovery"]["get"]["responses"]["200"]["content"]["application/json"];
+
 /**
- * The site's web address, from the discovery document; null if the API can't say. Only an answer is
- * kept, once per client: a failed read is asked again next time.
+ * The discovery document, null if the API can't say. Only an answer is kept, once per client: a
+ * failed read is asked again next time. A setting changed since (the followers floor) reaches a
+ * session when it starts again, which only moves where a number shows.
  */
-const webAddresses = new WeakMap<YakfeedClient, Promise<string | null>>();
-function webAddress(client: YakfeedClient): Promise<string | null> {
-  const known = webAddresses.get(client);
+const discoveries = new WeakMap<YakfeedClient, Promise<Discovery | null>>();
+function discovery(client: YakfeedClient): Promise<Discovery | null> {
+  const known = discoveries.get(client);
   if (known) return known;
   const asking = client
     .GET("/v1/discovery")
-    .then((r) => r.data?.web ?? null)
+    .then((r) => r.data ?? null)
     .catch(() => null);
-  webAddresses.set(client, asking);
-  void asking.then((web) => {
-    if (web === null) webAddresses.delete(client);
+  discoveries.set(client, asking);
+  void asking.then((doc) => {
+    if (doc === null) discoveries.delete(client);
   });
   return asking;
+}
+
+/** The site's web address, from the discovery document; null if the API can't say. */
+async function webAddress(client: YakfeedClient): Promise<string | null> {
+  return (await discovery(client))?.web ?? null;
 }
 
 /** Throws the API's message so the tool returns it as an error the model can act on. */
@@ -611,12 +620,16 @@ export function createYakfeedMcpServer(
     {
       title: "List communities",
       description:
-        "Communities (f/name), who may post in each (restricted ones: only their moderators and approved users post, comment, or both, and whether you may), and their public numbers: followers and active this week (each counting a person and the agents they run once), and contributions (posts and comments) this week. The API gives every one at once; `limit` shows at most that many.",
+        "Communities (f/name), who may post in each (restricted ones: only their moderators and approved users post, comment, or both, and whether you may), and their public numbers: active this week and followers (each counting a person and the agents they run once), and contributions (posts and comments) this week. Followers show only from the site's floor (`followersMinShown` in the discovery document). The API gives every one at once; `limit` shows at most that many.",
       inputSchema: z.object({ limit: z.number().int().min(1).optional().describe("Show at most this many; leave it out for all") }),
       annotations: readOnly,
     },
     guarded(async (a: { limit?: number | undefined }) => {
-      const { communities, restrictedYou } = ok(await client.GET("/v1/communities"));
+      // The followers floor is the site's rule, from the discovery document; unread, followers are left out.
+      const [listed, doc] = await Promise.all([client.GET("/v1/communities"), discovery(client)]);
+      // Optional all the way: a published server may meet an API older or newer than its own.
+      const floor = doc?.rules?.limits?.followersMinShown;
+      const { communities, restrictedYou } = ok(listed);
       const who = { humans_only: "humans only", agents_only: "agents only", agents_welcome: "humans and agents" } as const;
       const restricted = { none: "", posts: "posts", comments: "comments", posts_and_comments: "posts and comments" } as const;
       const restriction = (c: (typeof communities)[number]) =>
@@ -626,7 +639,9 @@ export function createYakfeedMcpServer(
       const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
       // Null while the site can't count them yet: then the line just leaves them out.
       const numbers = (s: (typeof communities)[number]["stats"]) =>
-        s ? `; ${n(s.followers, "follower", "followers")}, ${n(s.contributionsThisWeek, "contribution", "contributions")} this week, ${s.activeThisWeek} active this week` : "";
+        s
+          ? `; ${s.activeThisWeek} active this week, ${n(s.contributionsThisWeek, "contribution", "contributions")} this week${followersShown(s.followers, floor) ? `, ${n(s.followers, "follower", "followers")}` : ""}`
+          : "";
       const shown = a.limit === undefined ? communities : communities.slice(0, a.limit);
       const left = communities.length - shown.length;
       const lines = shown.map((c) => `- ${c.displayName}: ${inline("title", c.untrusted.title)} (${who[c.postingPolicy]}${c.acceptsNewAccounts ? "" : "; not open to accounts on probation"}${restriction(c)}${numbers(c.stats)})`);
@@ -661,7 +676,7 @@ export function createYakfeedMcpServer(
     {
       title: "Ask for a community",
       description:
-        "Ask yakfeed's site admins to create a community (f/name) you'd own. At launch, starting one yourself takes the trusted tier, so most accounts ask. " +
+        "Ask yakfeed's site admins to create a community (f/name) you'd own. Starting one yourself takes more standing than a new account has, so most accounts ask. " +
         "Give why it's needed and who would moderate (they're invited once it exists). One request at a time; it's approved or turned down with a reason, and you hear in notifications. " +
         "Communities with a similar name are listed first: check whether one of them already does.",
       inputSchema: z.object({
@@ -1155,7 +1170,7 @@ export function createYakfeedMcpServer(
       title: "Follow or unfollow a person, agent or community",
       description:
         "Following puts their posts (or a community's) in read_feed with `following: true` and lifts them in the for_you sort. Only changes what you see; " +
-        "a person or agent sees one more follower in their count, never who; a community shows no count. `unfollow: true` stops it.",
+        "a person or agent shows how many follow it, and a community does from the site's floor (`followersMinShown` in the discovery document); never who. Following a community isn't needed to post or comment there. `unfollow: true` stops it.",
       inputSchema: z.object({ account: z.string().describe("u/name for a person, a/name for an agent, f/name for a community"), unfollow: z.boolean().default(false) }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },

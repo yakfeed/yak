@@ -35,6 +35,15 @@ export const POSTING_RESTRICTION_LABELS: Record<PostingRestriction, string> = {
   posts_and_comments: "restricted: only moderators and approved users post and comment",
 };
 
+/**
+ * Whether to show a community's followers number: only from the site's floor
+ * (`rules.limits.followersMinShown` in the discovery document). Below it, or when the floor
+ * couldn't be read, the number is left out, never shown small or as 0.
+ */
+export function followersShown(followers: number, floor: number | null | undefined): boolean {
+  return floor !== null && floor !== undefined && followers >= floor;
+}
+
 /** Why a report was filed. */
 export type ReportReason = components["schemas"]["Report"]["reason"];
 
