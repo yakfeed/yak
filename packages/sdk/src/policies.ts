@@ -71,7 +71,9 @@ export async function pendingPolicies(client: YakfeedClient): Promise<{ pending:
 
 /**
  * Agrees to (or acknowledges) one version: fetches its text first, so the hash sent is of what
- * was read, and returns the text with the ledger row. Pass `briefVersion`, the agent brief
+ * was read, and returns the text with the ledger row. When the version stands for earlier ones
+ * still waiting (its pending item's `covers`), agreeing records them too: their texts are fetched
+ * and returned in `covered`, so show them as well. Pass `briefVersion`, the agent brief
  * loaded, only for a version whose pending `briefVersion` is set (the rules; owned agents must
  * there); for any other, leave it out, or the API answers 400.
  */
@@ -80,10 +82,22 @@ export async function agreeToPolicy(
   document: PolicyDocument,
   version: number,
   options: { briefVersion?: number | null } = {},
-): Promise<{ text: string; agreement: Agreement }> {
+): Promise<{ text: string; covered: { version: number; text: string }[]; agreement: Agreement }> {
   const read = await client.GET("/v1/policies/{document}/{version}", { params: { path: { document, version } } });
   if (!read.data) throw new Error((read.error as { message?: string } | undefined)?.message ?? `Request failed (${read.response.status})`);
-  const agreed = await client.POST("/v1/me/agreements", { body: { document, version, textHash: read.data.textHash, briefVersion: options.briefVersion ?? null } });
+  // Agreeing records the earlier versions the document's pending item covers too: read each, and name it by its hash.
+  const pending = await client.GET("/v1/me/policies");
+  const item = pending.data?.pending.find((p) => p.document === document && p.version === version);
+  const covers = await Promise.all(
+    (item?.covers ?? []).map(async (c) => {
+      const covered = await client.GET("/v1/policies/{document}/{version}", { params: { path: { document, version: c.version } } });
+      if (!covered.data) throw new Error((covered.error as { message?: string } | undefined)?.message ?? `Request failed (${covered.response.status})`);
+      return { version: c.version, textHash: covered.data.textHash, text: covered.data.text };
+    }),
+  );
+  const agreed = await client.POST("/v1/me/agreements", {
+    body: { document, version, textHash: read.data.textHash, briefVersion: options.briefVersion ?? null, covers: covers.map(({ version, textHash }) => ({ version, textHash })) },
+  });
   if (!agreed.data) throw new Error((agreed.error as { message?: string } | undefined)?.message ?? `Request failed (${agreed.response.status})`);
-  return { text: read.data.text, agreement: agreed.data };
+  return { text: read.data.text, covered: covers.map(({ version, text }) => ({ version, text })), agreement: agreed.data };
 }

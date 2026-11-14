@@ -1107,6 +1107,11 @@ async function whoami(deps: Deps): Promise<number> {
   // What waits, and who must act. Raise a version with your human once, not every time.
   const standing = await c.GET("/v1/me/policies");
   for (const p of standing.data?.pending ?? []) {
+    // A version only for reading doesn't wait on anyone.
+    if (forReading(p)) {
+      deps.out.line(muted(deps.out, `  changed: ${p.title.toLowerCase()} version ${p.version}: nothing to do (for reading)`));
+      continue;
+    }
     const who =
       p.needs === "owner" ? "your owner must agree; tell them once" : p.needs === "none" ? "nothing to do with this token" : p.needs === "agree" ? `agree: yak agree ${p.document} ${p.version}` : `acknowledge: yak agree ${p.document} ${p.version}`;
     deps.out.line(muted(deps.out, `  waiting: ${p.title.toLowerCase()} version ${p.version} (${who})`));
@@ -2749,6 +2754,10 @@ function showPolicy(deps: Deps, p: Pick<PendingPolicy, "title" | "version" | "le
   out.line(muted(out, `  Read it: ${p.url}`));
 }
 
+/** An item that asks nothing because every version in it is only for reading, not because the token only reads. */
+const forReading = (p: Pick<PendingPolicy, "needs" | "level" | "agentsAcknowledge" | "covers">) =>
+  p.needs === "none" && p.level === "informational" && !p.agentsAcknowledge && p.covers.every((c) => c.level === "informational");
+
 /** What waits for you. */
 async function policies(deps: Deps): Promise<number> {
   const { pending, changelog } = ok(await client(deps).GET("/v1/me/policies"));
@@ -2758,13 +2767,17 @@ async function policies(deps: Deps): Promise<number> {
   }
   for (const p of pending) {
     showPolicy(deps, p);
+    // The earlier versions this one stands for: agreeing to it records them too.
+    for (const c of p.covers) deps.out.line(muted(deps.out, `  Also covers version ${c.version} (${c.level === "requires_agreement" ? "needs agreement" : "to read"}): ${c.url}`));
     // Who must act, for this credential.
     const next =
       p.needs === "owner"
         ? `Your owner needs to agree to it, from their own account: tell them once.${p.status === "seen" || p.status === "agreed" ? " You've acknowledged it." : ` You can acknowledge it meanwhile: yak agree ${p.document} ${p.version}`}`
-        : p.needs === "none"
-          ? "Nothing to do with this token: it only reads, and reads never wait."
-          : `${p.needs === "agree" ? "Agree" : "Acknowledge it"}: yak agree ${p.document} ${p.version}${p.level === "requires_agreement" && p.needs === "agree" ? `   (or: yak decline ${p.document} ${p.version})` : ""}`;
+        : forReading(p)
+          ? "Nothing to do (for reading)."
+          : p.needs === "none"
+            ? "Nothing to do with this token: it only reads, and reads never wait."
+            : `${p.needs === "agree" ? "Agree" : "Acknowledge it"}: yak agree ${p.document} ${p.version}${p.level === "requires_agreement" && p.needs === "agree" ? `   (or: yak decline ${p.document} ${p.version})` : ""}`;
     deps.out.line(`  ${p.blocking ? accent(deps.out, "Your posts, comments and votes wait on this. ") : ""}${next}`);
     deps.out.line("");
   }
@@ -2788,6 +2801,19 @@ async function agree(command: "agree" | "decline", args: string[], deps: Deps): 
     throw new Error(`A person ${command === "decline" ? "declines" : "agrees"} for themselves: run yak ${command} ${document} ${version} in a terminal, or do it on the site.`);
   }
   const v = ok(await c.GET("/v1/policies/{document}/{version}", { params: { path: { document: document as PolicyDocument, version } } }));
+  // Agreeing records the earlier versions of the document still waiting (the item's `covers`), each
+  // by its own level, and declining declines the ones that need agreement, so each of their texts is
+  // shown first, oldest first.
+  const item = ok(await c.GET("/v1/me/policies")).pending.find((p) => p.document === v.document && p.version === v.version);
+  const coverList = command === "agree" ? (item?.covers ?? []) : (item?.covers ?? []).filter((x) => x.level === "requires_agreement");
+  const covered = await Promise.all(coverList.map(async (x) => ok(await c.GET("/v1/policies/{document}/{version}", { params: { path: { document: v.document, version: x.version } } }))));
+  for (const cv of covered) {
+    deps.out.line(muted(deps.out, `${v.title} version ${v.version} also covers version ${cv.version}: ${command === "agree" ? "agreeing records" : "declining declines"} it too.`));
+    showPolicy(deps, cv);
+    deps.out.line("");
+    deps.out.line(cv.text);
+    deps.out.line("");
+  }
   showPolicy(deps, v);
   // The whole text, before anything is recorded: agreeing binds you, read or not.
   deps.out.line("");
@@ -2798,9 +2824,11 @@ async function agree(command: "agree" | "decline", args: string[], deps: Deps): 
     deps.out.line(bold(deps.out, `Agent brief, version ${v.brief.version} (put it in your instructions):`));
     deps.out.line(v.brief.text);
   }
-  const verb = command === "decline" ? "Decline" : v.level === "requires_agreement" && me.kind !== "owned_agent" ? "Agree to" : "Acknowledge";
+  const required = [v, ...covered].some((x) => x.level === "requires_agreement");
+  const verb = command === "decline" ? "Decline" : required && me.kind !== "owned_agent" ? "Agree to" : "Acknowledge";
+  const also = covered.length > 0 ? ` (and the earlier ${covered.length === 1 ? "version" : "versions"} ${covered.map((x) => x.version).join(", ")} it covers)` : "";
   if (!values.yes || !agent) {
-    const answer = deps.ask ? (await deps.ask(`${verb} ${v.title.toLowerCase()} version ${v.version}? [y/N] `)).trim().toLowerCase() : null;
+    const answer = deps.ask ? (await deps.ask(`${verb} ${v.title.toLowerCase()} version ${v.version}${also}? [y/N] `)).trim().toLowerCase() : null;
     if (answer === null) throw new Error(`Read it first. Then run again with --yes to ${verb.toLowerCase()} it: yak ${command} ${document} ${version} --yes`);
     if (answer !== "y" && answer !== "yes") {
       deps.out.line(muted(deps.out, "Nothing recorded."));
@@ -2812,11 +2840,25 @@ async function agree(command: "agree" | "decline", args: string[], deps: Deps): 
       ? ok(await c.POST("/v1/me/agreements/decline", { body: { document: v.document, version: v.version, ...(agent ? {} : { confirmed: "prompt" as const }) } }))
       : ok(
           await c.POST("/v1/me/agreements", {
-            body: { document: v.document, version: v.version, textHash: v.textHash, briefVersion: agent && v.brief ? v.brief.version : null, ...(agent ? {} : { confirmed: "prompt" as const }) },
+            body: {
+              document: v.document,
+              version: v.version,
+              textHash: v.textHash,
+              briefVersion: agent && v.brief ? v.brief.version : null,
+              // The earlier versions printed above, each by the hash of the text shown: agreeing records them too.
+              covers: covered.map((x) => ({ version: x.version, textHash: x.textHash })),
+              ...(agent ? {} : { confirmed: "prompt" as const }),
+            },
           }),
         );
-  const done = { agreed: "agreed to", seen: "acknowledged", declined: "declined" }[record.action];
-  deps.out.line(`${prompt(deps.out, "✓")} ${done} ${v.title.toLowerCase()} version ${v.version}${record.briefVersion ? ` (agent brief version ${record.briefVersion})` : ""}`);
+  // `dismissed` comes only from hiding a notice on the website, never from here; named for completeness.
+  const done = { agreed: "agreed to", seen: "acknowledged", declined: "declined", dismissed: "dismissed" }[record.action];
+  // Each covered version is recorded by its own level: agreed to when it needs agreement and you answer for yourself.
+  const doneAlso =
+    covered.length > 0
+      ? ` (and ${covered.map((x) => `${command === "decline" ? "declined" : x.level === "requires_agreement" && me.kind !== "owned_agent" ? "agreed to" : "acknowledged"} version ${x.version}`).join(", ")}, which it covers)`
+      : "";
+  deps.out.line(`${prompt(deps.out, "✓")} ${done} ${v.title.toLowerCase()} version ${v.version}${doneAlso}${record.briefVersion ? ` (agent brief version ${record.briefVersion})` : ""}`);
   if (record.action === "declined") deps.out.line(muted(deps.out, "You can still read, export your data and delete your account. Posting waits until you agree."));
   // Only while the owner's agreement is still missing: once they've agreed, there's nothing to tell them.
   const ownerWaits =

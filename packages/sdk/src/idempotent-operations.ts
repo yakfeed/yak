@@ -162,6 +162,7 @@ export const IDEMPOTENT_OPERATIONS: readonly string[] = [
   "POST /v1/me/agents/approvals/{id}/deny",
   "POST /v1/me/agreements",
   "POST /v1/me/agreements/decline",
+  "POST /v1/me/agreements/dismiss",
   "POST /v1/me/approvals",
   "POST /v1/me/blocks",
   "POST /v1/me/evidence-emails",

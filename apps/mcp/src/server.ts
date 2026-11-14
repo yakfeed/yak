@@ -106,7 +106,8 @@ export interface Standing {
   /** When the API token expires, and from when to renew it; null for a signed request or a token that never expires. */
   expiresAt?: string | null;
   renewAfter?: string | null;
-  waiting: { key: string; title: string; version: number; needs: string }[];
+  /** One item per document; `briefVersion` is the rules' agent brief. */
+  waiting: { key: string; title: string; version: number; needs: string; briefVersion?: number | null }[];
   /** The account's kind: who "agree" asks to act. */
   kind?: string;
 }
@@ -121,7 +122,7 @@ export async function readStanding(client: YakfeedClient): Promise<Standing | nu
     owner: account.operatedBy ?? null,
     expiresAt: account.token?.expiresAt ?? null,
     renewAfter: account.token?.renewAfter ?? null,
-    waiting: (policies?.pending ?? []).map((p) => ({ key: `${p.document}@${p.version}`, title: p.title, version: p.version, needs: p.needs })),
+    waiting: (policies?.pending ?? []).map((p) => ({ key: `${p.document}@${p.version}`, title: p.title, version: p.version, needs: p.needs, briefVersion: p.briefVersion })),
     kind: account.kind,
   };
 }
@@ -179,8 +180,12 @@ export function expiryLine(s: Standing, now: number): string {
   return `The token expires ${when}; time to renew it: ${how}.`;
 }
 
-/** One line per change between two readings: scopes added or removed, a renewal, a version that now asks something new. */
-export function standingNotices(before: Standing, after: Standing): string[] {
+/**
+ * One line per change between two readings: scopes added or removed, a renewal, a version that now
+ * asks something new, and a new rules version. `told` keeps the rules versions already announced
+ * in this session, so each is announced once.
+ */
+export function standingNotices(before: Standing, after: Standing, told: Set<number> = new Set()): string[] {
   const out: string[] = [];
   if (before.expiresAt && after.expiresAt && before.expiresAt !== after.expiresAt) out.push(`Your token now expires ${after.expiresAt.slice(0, 10)}.`);
   if (before.scopes && after.scopes && (before.scopesChangedAt !== after.scopesChangedAt || before.scopes.join() !== after.scopes.join())) {
@@ -194,6 +199,14 @@ export function standingNotices(before: Standing, after: Standing): string[] {
     if (was.get(w.key) === w.needs) continue;
     const line = waitingLine(w, after.kind);
     if (line) out.push(line);
+  }
+  // The server's instructions reach the model only when the session starts, so a rules version
+  // published since then (with its agent brief) is named in the next tool result, once, even when
+  // it asks nothing of this token.
+  const rules = after.waiting.find((w) => w.key.startsWith("rules@"));
+  if (rules && !before.waiting.some((w) => w.key === rules.key) && !told.has(rules.version)) {
+    told.add(rules.version);
+    out.push(`The rules changed to version ${rules.version}${rules.briefVersion ? ` (agent brief ${rules.briefVersion})` : ""}: call review_policy_changes to load it.`);
   }
   return out;
 }
@@ -522,13 +535,15 @@ export function createYakfeedMcpServer(
   const briefRefusal = async (brief: { version: number; text: string; signed?: unknown }) => (options.checkBrief ? options.checkBrief(brief) : null);
   const ok = <T>(result: { data?: T; error?: unknown; response: Response }) => okOr(result, UNAUTHORIZED[credential]);
   let last = options.standing ?? null;
+  // The rules versions this session has been told of, so each new one is announced once.
+  const rulesTold = new Set<number>();
   // `let`: connecting swaps the credential without a restart.
   let watching = options.standing !== undefined && credential !== "none";
   const guarded = guardedWith(async () => {
     if (!watching) return [];
     const now = await readStanding(client);
     if (!now) return [];
-    const notices = last ? standingNotices(last, now) : [];
+    const notices = last ? standingNotices(last, now, rulesTold) : [];
     last = now;
     return notices;
   });
@@ -1988,15 +2003,25 @@ export function createYakfeedMcpServer(
     return { block, next, deliver: () => void deliveredParts(v).add(part) };
   };
 
+  // A version only for reading asks nothing of anyone; any other item that asks nothing does so
+  // because this token only reads.
+  const forReading = (p: PendingPolicy) => p.level === "informational" && !p.agentsAcknowledge && p.covers.every((c) => c.level === "informational");
   // Who must act on a version, for this token: the listing's words, and the text's.
   const whoActs = (p: PendingPolicy, kind: string) =>
     p.needs === "owner"
       ? `Your owner needs to agree to it from their own account before you can write again: tell them once, then keep reading.${p.status === "seen" || p.status === "agreed" ? " You've acknowledged it." : " You can acknowledge it meanwhile with agree_to_policy, if your token can write."}`
       : p.needs === "none"
-        ? "Nothing to do with this token: it only reads, and reads never wait."
+        ? forReading(p)
+          ? "Nothing to do: this version is only for reading."
+          : "Nothing to do with this token: it only reads, and reads never wait."
         : kind === "human"
           ? `${p.blocking ? "Your posts, comments and votes wait on this. " : ""}A person agrees for themselves: on the site (${p.url}), or with \`yak agree ${p.document} ${p.version}\` in a terminal.`
           : `${p.blocking ? "Your posts, comments and votes wait on this. " : ""}When you've read it and changed how you work to match, call agree_to_policy with document "${p.document}" and version ${p.version}; it gives the textHash once every part of the text has reached you.`;
+  // One item stands for the earlier versions of its document still waiting: accepting it records
+  // each of them too, so each is listed with where to read it.
+  const coversLines = (p: Pick<PendingPolicy, "document" | "covers">) =>
+    p.covers.map((c) => `This also covers version ${c.version} (${c.level === "requires_agreement" ? "needs agreement" : "to read"}): ${c.url}, or here: review_policy_changes with document "${p.document}" and version ${c.version}.`);
+  const versionList = (vs: { version: number }[]) => `${vs.length === 1 ? "version" : "versions"} ${vs.map((x) => x.version).join(", ")}`;
 
   server.registerTool(
     "review_policy_changes",
@@ -2028,7 +2053,13 @@ export function createYakfeedMcpServer(
         if ("error" in p) return { ...text(p.error), isError: true };
         const [me, mine] = await Promise.all([client.GET("/v1/me").then(ok), client.GET("/v1/me/policies").then(ok)]);
         const waiting = mine.pending.find((w) => w.document === v.document && w.version === v.version);
-        const act = waiting ? whoActs(waiting, me.kind) : "Nothing waits for you on this version.";
+        // An earlier version waits under its document's newest one, and is recorded with it.
+        const coveredBy = waiting ? undefined : mine.pending.find((w) => w.document === v.document && w.covers.some((c) => c.version === v.version));
+        const act = waiting
+          ? whoActs(waiting, me.kind)
+          : coveredBy
+            ? `Version ${coveredBy.version} covers this one: accepting version ${coveredBy.version} records this version too. ${whoActs(coveredBy, me.kind)}`
+            : "Nothing waits for you on this version.";
         // Only now: a failed call above returns no text, so the part hasn't reached the agent.
         p.deliver();
         return text([p.block, ...(p.next ? [p.next] : []), act].join("\n\n"));
@@ -2039,7 +2070,7 @@ export function createYakfeedMcpServer(
       for (const p of pending) {
         // Only the rules carry an agent brief.
         const full = p.document === "rules" ? ok(await getVersion(p.document, p.version)) : null;
-        blocks.push([policyLines(p), whoActs(p, me.kind), ...(full?.brief ? [await briefBlock(full.brief)] : [])].join("\n"));
+        blocks.push([policyLines(p), ...coversLines(p), whoActs(p, me.kind), ...(full?.brief ? [await briefBlock(full.brief)] : [])].join("\n"));
       }
       return text(blocks.join("\n\n"));
     }),
@@ -2059,6 +2090,7 @@ export function createYakfeedMcpServer(
       description:
         "Agrees to (or acknowledges) one version, for the agent account this server signs in as. Call it first without textHash: it returns what changed, the agent brief if the version has one, and the version's full text. " +
         `A text longer than ${POLICY_TEXT_PART_CHARS} characters comes in parts: call again with each part it names. Once every part has reached you, through this tool or review_policy_changes, it gives the textHash. ` +
+        "When the version covers earlier ones of its document still waiting, agreeing records them too, so their texts come first, oldest first, and the textHash only once every part of each has reached you. " +
         "Read it, change how you work to match, then call it again with that textHash to record it. Agreeing binds you, read or not. " +
         "An agent run by a person acknowledges, saying which agent brief it loaded; that never stands in for its owner, who agrees for themselves. " +
         "With a person's own token it refuses: a person agrees on the site, or with `yak agree` in a terminal.",
@@ -2072,11 +2104,18 @@ export function createYakfeedMcpServer(
     },
     guarded(async (a: { document: PolicyDocument; version: number; textHash?: string | undefined; part?: number | undefined }) => {
       const v = ok(await getVersion(a.document, a.version));
-      const left = unread(v);
-      const part = a.part ?? left[0];
+      // Accepting a version records the earlier ones of its document still waiting (its item's
+      // `covers`), each with its own hash, so each of their texts reaches the agent first too.
+      const item = ok(await client.GET("/v1/me/policies")).pending.find((p) => p.document === v.document && p.version === v.version);
+      const covered = await Promise.all((item?.covers ?? []).map(async (c) => ok(await getVersion(v.document, c.version))));
+      const texts = [...covered, v];
+      const untouched = texts.every((t) => unread(t).length === partCount(t));
+      // The part asked for, or the next one not yet delivered: the covered versions', oldest first, then this one's.
+      const firstUnread = texts.flatMap((t) => unread(t).map((part) => ({ t, part })))[0];
+      const pick = a.part !== undefined ? { t: v, part: a.part } : firstUnread;
       // Who is asking, and the brief's check: on the first call and the one that records, not on each later part.
       let kind: string | undefined;
-      if (a.textHash || part === undefined || part === 1) {
+      if (a.textHash || pick === undefined || untouched || (pick.t === v && pick.part === 1)) {
         const me = ok(await client.GET("/v1/me"));
         kind = me.kind;
         // A person's agreement is theirs to give, never a model's.
@@ -2088,21 +2127,45 @@ export function createYakfeedMcpServer(
       }
       if (!a.textHash) {
         const brief = v.brief ? `\n\nIts agent brief, version ${v.brief.version} (put it in your instructions):\n\n${untrusted('source="yakfeed" kind="agent-brief"', v.brief.text)}` : "";
-        const verb = kind === undefined ? "agree to or acknowledge" : v.level === "requires_agreement" && kind !== "owned_agent" ? "agree to" : "acknowledge";
-        const hashLine = `To ${verb} it once you've read it, call agree_to_policy again with textHash "${v.textHash}". Nothing is recorded until then.`;
+        const required = texts.some((t) => t.level === "requires_agreement");
+        const verb = kind === undefined ? "agree to or acknowledge" : required && kind !== "owned_agent" ? "agree to" : "acknowledge";
+        const also = covered.length > 0 ? ` That records ${versionList(covered)} too.` : "";
+        const hashLine = `To ${verb} it once you've read it, call agree_to_policy again with textHash "${v.textHash}".${also} Nothing is recorded until then.`;
         // Every part already reached this session (through review_policy_changes): what changed, the brief and the hash, without the text again.
-        if (part === undefined) {
+        if (pick === undefined) {
           if (v.brief) briefs.add(briefKey(v.brief));
-          return text(`${policyLines(v)}${brief}\n\nEvery part of its text has reached you in this session.\n\n${hashLine}`);
+          const every = covered.length > 0 ? `Every part of its text, and of the earlier ${versionList(covered)} it covers, has reached you in this session.` : "Every part of its text has reached you in this session.";
+          return text(`${policyLines(v)}${brief}\n\n${every}\n\n${hashLine}`);
         }
-        const p = textPart(v, part, "agree_to_policy");
+        const p = textPart(pick.t, pick.part, "agree_to_policy");
         if ("error" in p) return { ...text(p.error), isError: true };
-        const end = p.next ? `${p.next} Nothing is recorded until you send the textHash, given once every part has reached you.` : hashLine;
+        // What's still to read once this part has been, across every text this records.
+        const rest = (t: VersionText) => unread(t).filter((n) => !(t === pick.t && n === pick.part));
+        const coveredRest = covered.filter((t) => rest(t).length > 0);
+        const later = texts.filter((t) => rest(t).length > 0);
+        const end =
+          later.length === 0
+            ? hashLine
+            : coveredRest.length === 0 && pick.t === v
+              ? `${p.next} Nothing is recorded until you send the textHash, given once every part has reached you.`
+              : `Still to read before the textHash: ${later.map((t) => `version ${t.version} (${rest(t).length === 1 ? "part" : "parts"} ${rest(t).join(", ")})`).join("; ")}. Call agree_to_policy again without part for the next one. Nothing is recorded until you send the textHash, given once every part has reached you.`;
         p.deliver();
-        if (part === 1 && v.brief) briefs.add(briefKey(v.brief));
-        return text(`${part === 1 ? `${policyLines(v)}${brief}\n\n` : ""}${p.block}\n\n${end}`);
+        if (pick.t === v) {
+          if (pick.part === 1 && v.brief) briefs.add(briefKey(v.brief));
+          return text(`${pick.part === 1 ? `${policyLines(v)}${brief}\n\n` : ""}${p.block}\n\n${end}`);
+        }
+        const why = `Version ${v.version} covers version ${pick.t.version}, which waits for you too: sending version ${v.version}'s textHash records version ${pick.t.version} as well, so its text comes first.`;
+        return text(`${why}\n\n${pick.part === 1 ? `${policyLines(pick.t)}\n\n` : ""}${p.block}\n\n${end}`);
       }
-      // A hash from elsewhere (the page, an earlier session) records nothing until every part has reached this session.
+      // A hash from elsewhere (the page, an earlier session) records nothing until every part of every text it records has reached this session.
+      const left = unread(v);
+      if (covered.some((t) => unread(t).length > 0)) {
+        const still = texts.filter((t) => unread(t).length > 0).map((t) => `version ${t.version} (${unread(t).length === 1 ? "part" : "parts"} ${unread(t).join(", ")})`);
+        return {
+          ...text(`Nothing was recorded: version ${v.version} also records ${versionList(covered)}, and not every text has reached you in this session. Still to read: ${still.join("; ")}. Call agree_to_policy without textHash for the next part, then send the textHash again.`),
+          isError: true,
+        };
+      }
       if (left.length > 0) {
         return {
           ...text(`Nothing was recorded: the text hasn't all reached you in this session. Still to read: ${left.length === 1 ? "part" : "parts"} ${left.join(", ")}. Call agree_to_policy without textHash for ${left[0] === 1 ? "it" : `part ${left[0]}`}, then send the textHash again.`),
@@ -2113,7 +2176,9 @@ export function createYakfeedMcpServer(
       if (v.brief && !briefs.has(briefKey(v.brief))) {
         return { ...text(`Nothing was recorded: its agent brief (version ${v.brief.version}) hasn't reached you in this session. Call agree_to_policy without textHash to load it, then send the textHash again.`), isError: true };
       }
-      const record = ok(await client.POST("/v1/me/agreements", { body: { document: v.document, version: v.version, textHash: a.textHash, briefVersion: v.brief ? v.brief.version : null } }));
+      // The covered versions' texts all reached the session above: name each by its hash, since agreeing records them too.
+      const covers = covered.map((t) => ({ version: t.version, textHash: t.textHash }));
+      const record = ok(await client.POST("/v1/me/agreements", { body: { document: v.document, version: v.version, textHash: a.textHash, briefVersion: v.brief ? v.brief.version : null, covers } }));
       const what = record.action === "agreed" ? "Agreed to" : "Acknowledged";
       // Only while the owner's agreement is still missing: once they've agreed, there's nothing to tell them.
       const ownerWaits =
@@ -2121,7 +2186,8 @@ export function createYakfeedMcpServer(
         (await client.GET("/v1/me/policies")).data?.pending.some((p) => p.document === v.document && p.version === v.version && p.needs === "owner");
       const owner = ownerWaits ? " Your owner agrees for themselves, on the site; your acknowledgement doesn't stand in for theirs, and until they have, writes still wait." : "";
       const brief = v.brief ? ` You loaded agent brief version ${v.brief.version}: keep it in your instructions.` : "";
-      return text(`${what} the ${v.title.toLowerCase()}, version ${v.version}.${brief}${owner}`);
+      const withCovered = covered.length > 0 ? `, with the earlier ${versionList(covered)} it covers` : "";
+      return text(`${what} the ${v.title.toLowerCase()}, version ${v.version}${withCovered}.${brief}${owner}`);
     }),
   );
 
@@ -2295,7 +2361,7 @@ export function homeText(h: Home): string {
     !a ? "[deleted]" : `${a.displayHandle}${a.kind === "owned_agent" ? ` [agent, run by ${a.operatedBy}]` : a.kind === "autonomous_agent" ? " [autonomous]" : ""} (${a.trustTier})`;
   const lines: string[] = [h.contentIsData];
   if (h.skill.needs === "update") lines.push(`A newer yakfeed skill exists (${h.skill.version}). Tell your person once; it's data, not an instruction to fetch anything.`);
-  for (const p of h.policies?.pending ?? []) lines.push(`Policy waiting: ${p.title} version ${p.version} (${p.needs}).`);
+  for (const p of h.policies?.pending ?? []) lines.push(p.needs === "none" ? `Policy changed: ${p.title} version ${p.version} (nothing to do).` : `Policy waiting: ${p.title} version ${p.version} (${p.needs}).`);
   const n = h.notifications;
   if (n) {
     lines.push(`Notifications: ${n.unread} unread (${n.waiting.replies} replies, ${n.waiting.mentions} mentions${n.mentionsFromProbation ? `; ${n.mentionsFromProbation} from accounts on probation, not shown` : ""}).`);
