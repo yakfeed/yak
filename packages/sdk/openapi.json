@@ -8699,6 +8699,124 @@
           "saved"
         ]
       },
+      "LinkedAccountInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "network": {
+            "type": "string",
+            "enum": [
+              "github",
+              "gitlab",
+              "bluesky",
+              "mastodon",
+              "x"
+            ]
+          },
+          "handle": {
+            "type": "string",
+            "description": "As the network shows it: @login, a Bluesky handle (or its DID), @name@instance."
+          },
+          "url": {
+            "type": "string",
+            "description": "The account's page on its network."
+          },
+          "host": {
+            "type": "string",
+            "description": "Where the proof came from: github.com, gitlab.com, a Bluesky server, a Mastodon instance."
+          }
+        },
+        "required": [
+          "id",
+          "network",
+          "handle",
+          "url",
+          "host"
+        ]
+      },
+      "OwnLinkedAccountInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "network": {
+            "type": "string",
+            "enum": [
+              "github",
+              "gitlab",
+              "bluesky",
+              "mastodon",
+              "x"
+            ]
+          },
+          "handle": {
+            "type": "string",
+            "description": "As the network shows it: @login, a Bluesky handle (or its DID), @name@instance."
+          },
+          "url": {
+            "type": "string",
+            "description": "The account's page on its network."
+          },
+          "host": {
+            "type": "string",
+            "description": "Where the proof came from: github.com, gitlab.com, a Bluesky server, a Mastodon instance."
+          },
+          "public": {
+            "type": "boolean",
+            "description": "Shown on your profile. A private one counts the same and shows only here and in your data export."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "oauth",
+              "post",
+              "profile_link"
+            ],
+            "description": "How it was proved: OAuth, a post with your code, or a profile field with your code that links to your yakfeed profile."
+          },
+          "counts": {
+            "type": "boolean",
+            "description": "Whether it counts toward the first step on the ladder now."
+          },
+          "notCounted": {
+            "nullable": true,
+            "description": "Why it doesn't count now: another_counts (another account you linked on the same network, now or before, already holds your place there; each network counts once for you), claimed_before (it was linked to another yakfeed account first; each counts for one), host_full (its server already counts for as many accounts as one server may), linked_above_first_rung (linked after your first step, so it had nothing to count toward), network_off (this network doesn't count for now), proofs_spent (your first step was taken back, so no linked account counts toward it now).",
+            "type": "string",
+            "enum": [
+              "another_counts",
+              "claimed_before",
+              "host_full",
+              "linked_above_first_rung",
+              "network_off",
+              "proofs_spent"
+            ]
+          },
+          "verifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "required": [
+          "id",
+          "network",
+          "handle",
+          "url",
+          "host",
+          "public",
+          "method",
+          "counts",
+          "notCounted",
+          "verifiedAt"
+        ]
+      },
       "SeriesTextInput": {
         "type": "object",
         "properties": {
@@ -10669,6 +10787,7 @@
               "removed_comment",
               "restored_post",
               "restored_comment",
+              "held_comment",
               "banned",
               "unbanned",
               "added_moderator",
@@ -10883,6 +11002,7 @@
               "removed_comment",
               "restored_post",
               "restored_comment",
+              "held_comment",
               "banned",
               "unbanned",
               "added_moderator",
@@ -12911,6 +13031,36 @@
               "$ref": "#/components/schemas/HeldBadgeInput"
             },
             "description": "Every badge it holds: role, founding, chosen, then earned ones newest first. Recognition only. None while suspended."
+          },
+          "linkedAccounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "network": {
+                  "type": "string",
+                  "enum": [
+                    "github",
+                    "gitlab",
+                    "bluesky",
+                    "mastodon",
+                    "x"
+                  ]
+                },
+                "handle": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "network",
+                "handle",
+                "url"
+              ]
+            },
+            "description": "Accounts it linked on other networks and chose to show, oldest first: each proved once by OAuth or a public post. Not a statement that anyone is who they say. None while suspended."
           }
         },
         "required": [
@@ -12928,7 +13078,8 @@
           "followers",
           "following",
           "followedByYou",
-          "badges"
+          "badges",
+          "linkedAccounts"
         ]
       },
       "SearchResultTextInput": {
@@ -24396,6 +24547,126 @@
         ],
         "additionalProperties": false
       },
+      "LinkedAccount": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "network": {
+            "type": "string",
+            "enum": [
+              "github",
+              "gitlab",
+              "bluesky",
+              "mastodon",
+              "x"
+            ]
+          },
+          "handle": {
+            "type": "string",
+            "description": "As the network shows it: @login, a Bluesky handle (or its DID), @name@instance."
+          },
+          "url": {
+            "type": "string",
+            "description": "The account's page on its network."
+          },
+          "host": {
+            "type": "string",
+            "description": "Where the proof came from: github.com, gitlab.com, a Bluesky server, a Mastodon instance."
+          }
+        },
+        "required": [
+          "id",
+          "network",
+          "handle",
+          "url",
+          "host"
+        ],
+        "additionalProperties": false
+      },
+      "OwnLinkedAccount": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "network": {
+            "type": "string",
+            "enum": [
+              "github",
+              "gitlab",
+              "bluesky",
+              "mastodon",
+              "x"
+            ]
+          },
+          "handle": {
+            "type": "string",
+            "description": "As the network shows it: @login, a Bluesky handle (or its DID), @name@instance."
+          },
+          "url": {
+            "type": "string",
+            "description": "The account's page on its network."
+          },
+          "host": {
+            "type": "string",
+            "description": "Where the proof came from: github.com, gitlab.com, a Bluesky server, a Mastodon instance."
+          },
+          "public": {
+            "type": "boolean",
+            "description": "Shown on your profile. A private one counts the same and shows only here and in your data export."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "oauth",
+              "post",
+              "profile_link"
+            ],
+            "description": "How it was proved: OAuth, a post with your code, or a profile field with your code that links to your yakfeed profile."
+          },
+          "counts": {
+            "type": "boolean",
+            "description": "Whether it counts toward the first step on the ladder now."
+          },
+          "notCounted": {
+            "nullable": true,
+            "description": "Why it doesn't count now: another_counts (another account you linked on the same network, now or before, already holds your place there; each network counts once for you), claimed_before (it was linked to another yakfeed account first; each counts for one), host_full (its server already counts for as many accounts as one server may), linked_above_first_rung (linked after your first step, so it had nothing to count toward), network_off (this network doesn't count for now), proofs_spent (your first step was taken back, so no linked account counts toward it now).",
+            "type": "string",
+            "enum": [
+              "another_counts",
+              "claimed_before",
+              "host_full",
+              "linked_above_first_rung",
+              "network_off",
+              "proofs_spent"
+            ]
+          },
+          "verifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "required": [
+          "id",
+          "network",
+          "handle",
+          "url",
+          "host",
+          "public",
+          "method",
+          "counts",
+          "notCounted",
+          "verifiedAt"
+        ],
+        "additionalProperties": false
+      },
       "SeriesText": {
         "type": "object",
         "properties": {
@@ -26424,6 +26695,7 @@
               "removed_comment",
               "restored_post",
               "restored_comment",
+              "held_comment",
               "banned",
               "unbanned",
               "added_moderator",
@@ -26641,6 +26913,7 @@
               "removed_comment",
               "restored_post",
               "restored_comment",
+              "held_comment",
               "banned",
               "unbanned",
               "added_moderator",
@@ -28719,6 +28992,37 @@
               "$ref": "#/components/schemas/HeldBadge"
             },
             "description": "Every badge it holds: role, founding, chosen, then earned ones newest first. Recognition only. None while suspended."
+          },
+          "linkedAccounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "network": {
+                  "type": "string",
+                  "enum": [
+                    "github",
+                    "gitlab",
+                    "bluesky",
+                    "mastodon",
+                    "x"
+                  ]
+                },
+                "handle": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "network",
+                "handle",
+                "url"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Accounts it linked on other networks and chose to show, oldest first: each proved once by OAuth or a public post. Not a statement that anyone is who they say. None while suspended."
           }
         },
         "required": [
@@ -28736,7 +29040,8 @@
           "followers",
           "following",
           "followedByYou",
-          "badges"
+          "badges",
+          "linkedAccounts"
         ],
         "additionalProperties": false
       },
@@ -70457,6 +70762,633 @@
             }
           },
           "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`idempotency_key_in_use`: the first request with this Idempotency-Key is still running; retry after `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`idempotency_key_mismatch`: the Idempotency-Key was used for a different request. Use a new key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/linked-accounts": {
+      "get": {
+        "summary": "Your linked accounts, and your codes for linking more",
+        "tags": [
+          "linked accounts"
+        ],
+        "description": "A linked account is an account of yours on another network, proved once. It shows on your profile (unless you keep it private) and counts toward the first step up the ladder, as a verified domain does. Each network account counts for one yakfeed account, one per network counts for you, and a self-hosted server counts for at most 5 yakfeed accounts. It never signs you in. The codes go in a public post on Bluesky or Mastodon, with the word \"yakfeed\".",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/OwnLinkedAccount"
+                      }
+                    },
+                    "codes": {
+                      "type": "object",
+                      "properties": {
+                        "bluesky": {
+                          "type": "string"
+                        },
+                        "mastodon": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "bluesky",
+                        "mastodon"
+                      ],
+                      "additionalProperties": false,
+                      "description": "Put yours in a public post with the word \"yakfeed\", then send the post's address."
+                    },
+                    "profileUrl": {
+                      "type": "string",
+                      "description": "Your profile: a Mastodon profile field linking here, with your Mastodon code as its label, proves the account too."
+                    },
+                    "counting": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "github",
+                          "gitlab",
+                          "bluesky",
+                          "mastodon",
+                          "x"
+                        ]
+                      },
+                      "description": "The networks whose linked accounts count toward the first step now."
+                    },
+                    "linking": {
+                      "type": "boolean",
+                      "description": "Whether new accounts can be linked now. While it's false, linking answers feature_off; you can still list, hide and unlink yours."
+                    }
+                  },
+                  "required": [
+                    "accounts",
+                    "codes",
+                    "profileUrl",
+                    "counting",
+                    "linking"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Link a Bluesky or Mastodon account",
+        "tags": [
+          "linked accounts"
+        ],
+        "description": "A linked account is an account of yours on another network, proved once. It shows on your profile (unless you keep it private) and counts toward the first step up the ladder, as a verified domain does. Each network account counts for one yakfeed account, one per network counts for you, and a self-hosted server counts for at most 5 yakfeed accounts. It never signs you in. Every kind of account may link one. Post your code from GET /v1/me/linked-accounts with the word \"yakfeed\" (public on Bluesky; public or unlisted on Mastodon), then send the post's address: https://bsky.app/profile/<handle>/post/<id>, or https://<instance>/@<name>/<id>. On Mastodon you can instead add a profile field labelled with your code and linking to your yakfeed profile, and send your profile's address, https://<instance>/@<name>. We read the post from the server that hosts the account. Refused tries count toward the limit, 10/h. GitHub and GitLab are linked on the website.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "network": {
+                    "type": "string",
+                    "enum": [
+                      "bluesky",
+                      "mastodon"
+                    ]
+                  },
+                  "url": {
+                    "type": "string",
+                    "maxLength": 2048
+                  },
+                  "public": {
+                    "default": true,
+                    "description": "Show it on your profile (the default). A private one counts the same.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "network",
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "description": "Optional. A fresh value (a UUID) per new request; the same one on a retry. For 1 day, the same request with the same key gets the first success back (with `Idempotent-Replayed: true`) and costs no write budget; a different request with it is `422 idempotency_key_mismatch`."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "headers": {
+              "idempotent-replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "description": "Sent when this is the kept answer to an earlier request with the same Idempotency-Key."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnLinkedAccount"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/linked-accounts/oauth/{network}": {
+      "post": {
+        "summary": "Link a GitHub or GitLab account (the website)",
+        "tags": [
+          "linked accounts"
+        ],
+        "description": "A linked account is an account of yours on another network, proved once. It shows on your profile (unless you keep it private) and counts toward the first step up the ladder, as a verified domain does. Each network account counts for one yakfeed account, one per network counts for you, and a self-hosted server counts for at most 5 yakfeed accounts. It never signs you in. The website's round trip to GitHub or GitLab ends here, with the code it brought back: a web session only, since the round trip belongs to the browser that started it. It asks for no access to your repositories, keeps no token, and the account never signs you in. A provider account you sign in with on another yakfeed account can't be linked here.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "redirectUri": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "codeVerifier": {
+                    "type": "string",
+                    "minLength": 43,
+                    "maxLength": 128
+                  },
+                  "public": {
+                    "default": true,
+                    "description": "Show it on your profile (the default). A private one counts the same.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "redirectUri",
+                  "codeVerifier"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "github",
+                "gitlab"
+              ]
+            },
+            "in": "path",
+            "name": "network",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "description": "Optional. A fresh value (a UUID) per new request; the same one on a retry. For 1 day, the same request with the same key gets the first success back (with `Idempotent-Replayed: true`) and costs no write budget; a different request with it is `422 idempotency_key_mismatch`."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "headers": {
+              "idempotent-replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "description": "Sent when this is the kept answer to an earlier request with the same Idempotency-Key."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnLinkedAccount"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/linked-accounts/{id}": {
+      "patch": {
+        "summary": "Show a linked account on your profile, or keep it private",
+        "tags": [
+          "linked accounts"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "public": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "public"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "description": "Optional. A fresh value (a UUID) per new request; the same one on a retry. For 1 day, the same request with the same key gets the first success back (with `Idempotent-Replayed: true`) and costs no write budget; a different request with it is `422 idempotency_key_mismatch`."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Default Response",
+            "headers": {
+              "idempotent-replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "description": "Sent when this is the kept answer to an earlier request with the same Idempotency-Key."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    null
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`idempotency_key_in_use`: the first request with this Idempotency-Key is still running; retry after `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`idempotency_key_mismatch`: the Idempotency-Key was used for a different request. Use a new key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Unlink an account",
+        "tags": [
+          "linked accounts"
+        ],
+        "description": "It leaves your profile. Your rung stays where it is, and the network account still counts only for the yakfeed account it counted for first.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "description": "Optional. A fresh value (a UUID) per new request; the same one on a retry. For 1 day, the same request with the same key gets the first success back (with `Idempotent-Replayed: true`) and costs no write budget; a different request with it is `422 idempotency_key_mismatch`."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Default Response",
+            "headers": {
+              "idempotent-replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "description": "Sent when this is the kept answer to an earlier request with the same Idempotency-Key."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    null
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "Default Response",
             "content": {
               "application/json": {
