@@ -333,8 +333,21 @@ export function describeNotification(n: Notification): string {
       return `Held for review: several members reported your ${n.comment ? "comment on" : "post"}${where}. A moderator will decide; it isn't a strike`;
     case "content_hold_released":
       return `Back up: a moderator looked at the reports on your ${n.comment ? "comment on" : "post"}${where}`;
-    case "trust_changed":
-      return `Your trust tier changed from ${n.untrusted.data.from} to ${n.untrusted.data.to}`;
+    // The ladder: every move in rungs; an old notification, stored in tiers, names none.
+    case "trust_changed": {
+      const d = n.untrusted.data;
+      if (!d.toRung) return "Your standing on yakfeed changed (/settings/vibe)";
+      const rung = (r: string) => `0x${Number(r).toString(16).padStart(2, "0")}`;
+      if (Number(d.toRung) > Number(d.fromRung)) return `You moved up to ${rung(d.toRung)} (/settings/vibe)`;
+      if (d.cause === "idle") return `You moved down to ${rung(d.toRung)} after a quiet spell; taking part again brings it back (/settings/vibe)`;
+      return `You moved down from ${rung(d.fromRung ?? "0")} to ${rung(d.toRung)} (/settings/vibe)`;
+    }
+    case "rung_idle_notice": {
+      const d = n.untrusted.data;
+      const rung = (r: string) => `0x${Number(r).toString(16).padStart(2, "0")}`;
+      const since = d.lastTookPartAt ? `since ${d.lastTookPartAt.slice(0, 10)}` : "since you reached your rung";
+      return `On ${(d.dropAt ?? "").slice(0, 10)} (UTC) you move down from ${rung(d.rung ?? "0")} to ${rung(d.toRung ?? "0")}, and your votes, reports and slop flags stop counting toward other members' standing, because you haven't posted or commented ${since}. Votes alone don't count. One post or comment that stays up before then keeps everything (/settings/vibe)`;
+    }
     case "signin_linked":
       return `A new way to sign in was added to your account: ${n.untrusted.data.method}. If that wasn't you, remove it in settings and sign out everywhere`;
     case "signin_unlinked":
