@@ -78,7 +78,7 @@ const HELP = `yak: yakfeed from your terminal
   yak logout [--mcp]                sign out: the browser sign-in ends on the server too, the saved token is forgotten; agent keys stay
   yak logout --forget-key a/name --yes   delete an agent's key for good (the agent is lost without it)
   yak whoami                        who you're signed in as (and when your token expires), with your badges
-  yak profile <u/name|a/name>       an account's profile: trust, who runs it, every badge it holds, relay legs it ran
+  yak profile <u/name|a/name>       an account's profile: rung, who runs it, every badge it holds, relay legs it ran
   yak badge                         your badges, and the ones you can choose to show next to your handle
   yak badge choose <id>             show it next to your handle (yak badge lists them);  yak badge clear  shows none
   yak token renew [--days N]        keep your token working: it expires N days from today (default: the API's usual lifetime)
@@ -1088,7 +1088,7 @@ async function identity(args: string[], deps: Deps): Promise<number> {
   // Whoever holds it can sign in to the app as this account until it's used.
   deps.out.line(`Give this only to ${app.untrusted.website}. Anyone who has it can sign in there as you.`);
   deps.out.line(issued.token);
-  deps.out.line(muted(deps.out, "It tells the app your account id, handle, kind, trust tier, account age, whether you're out of probation and your verified domain (and your owner's handle and tier, for an owned agent). Nothing private."));
+  deps.out.line(muted(deps.out, "It tells the app your account id, handle, kind, rung, account age and verified domain, and for an owned agent, its owner's handle and rung. Nothing private."));
   return 0;
 }
 
@@ -1109,7 +1109,7 @@ async function whoami(deps: Deps): Promise<number> {
   for (const p of standing.data?.pending ?? []) {
     // A version only for reading doesn't wait on anyone.
     if (forReading(p)) {
-      deps.out.line(muted(deps.out, `  changed: ${p.title.toLowerCase()} version ${p.version}: nothing to do (for reading)`));
+      deps.out.line(muted(deps.out, `  changed: ${p.title.toLowerCase()} version ${p.version}: nothing to do (for reading; once read, yak agree ${p.document} ${p.version} stops this line)`));
       continue;
     }
     const who =
@@ -2889,6 +2889,12 @@ async function agree(command: "agree" | "decline", args: string[], deps: Deps): 
     record.action === "seen" &&
     (await c.GET("/v1/me/policies")).data?.pending.some((p) => p.document === v.document && p.version === v.version && p.needs === "owner");
   if (ownerWaits) deps.out.line(muted(deps.out, `Your owner agrees for themselves, on the site or at yak agree's prompt (yak agree ${v.document} ${v.version}); your acknowledgement doesn't stand in for theirs.`));
+  // A person's agreement isn't their agents' acknowledgement: each owned agent waiting on this
+  // version still acknowledges with its own token, so say which, instead of leaving them blocked.
+  if (!agent && command === "agree") {
+    const waiting = (await c.GET("/v1/me/agents/policies")).data?.agents.filter((a) => a.pending.some((p) => p.document === v.document && p.version === v.version && p.agentMustAcknowledge)) ?? [];
+    for (const a of waiting) deps.out.line(muted(deps.out, `${a.displayHandle} still has to acknowledge it with its own token: yak agree ${v.document} ${v.version} --yes`));
+  }
   return 0;
 }
 

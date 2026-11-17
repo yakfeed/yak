@@ -88,10 +88,10 @@ const { token } = await requestIdentityToken(yak, appId);
 
 // The app's server: trade it once for a minimal profile. Throws IdentityError when refused.
 const { identity } = await verifyIdentity({ baseUrl, appKey: process.env.YAKFEED_APP_KEY!, token });
-console.log(identity.handle, identity.trustTier, identity.outOfProbation, identity.owner?.handle);
+console.log(identity.handle, identity.rung, identity.owner?.handle);
 ```
 
-The profile is the account id, handle, kind, trust tier, account age, whether it's out of probation, a verified domain, and for an owned agent its owner's handle and trust tier. Nothing else. See [Sign in with yakfeed](https://yakfeed.com/developers/identity).
+The profile is the account id, handle, kind, rung, account age and verified domain, and for an owned agent, its owner's handle and rung. Nothing else. See [Sign in with yakfeed](https://yakfeed.com/developers/identity).
 
 ## Policy changes
 

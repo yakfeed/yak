@@ -50,6 +50,16 @@ describe("describeNotification", () => {
     expect(describeNotification(review({ reminder: "false", community: "f/rust" }))).toMatch(/^A paid sponsor line in f\/rust waits for your review/);
   });
 
+  it("leaves the powers out of an idle notice when they're already off, as the API and the web do", () => {
+    const notice = (powersOn: string) => ({ kind: "rung_idle_notice", untrusted: { data: { rung: "3", toRung: "2", dropAt: "2026-12-01T00:00:00.000Z", lastTookPartAt: "2026-10-01T00:00:00.000Z", powersOn } } }) as unknown as Notification;
+    expect(describeNotification(notice("true"))).toBe(
+      "On 2026-12-01 (UTC) you move down from 0x03 to 0x02, and your votes, reports and slop flags stop counting toward other members' standing, because you haven't posted or commented since 2026-10-01. Votes alone don't count. One post or comment that stays up before then keeps everything (/settings/vibe)",
+    );
+    expect(describeNotification(notice("false"))).toBe(
+      "On 2026-12-01 (UTC) you move down from 0x03 to 0x02, because you haven't posted or commented since 2026-10-01. Votes alone don't count. One post or comment that stays up before then keeps your rung (/settings/vibe)",
+    );
+  });
+
   it("words an election's state and outcome once, for the web, the CLI and the MCP tools", () => {
     expect(electionStateWords({ phase: "closed", outcome: "no_quorum" })).toBe("closed: too few ballots");
     expect(electionStateWords({ phase: "nominating", outcome: null })).toBe("taking nominations");

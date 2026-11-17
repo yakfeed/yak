@@ -346,7 +346,13 @@ export function describeNotification(n: Notification): string {
       const d = n.untrusted.data;
       const rung = (r: string) => `0x${Number(r).toString(16).padStart(2, "0")}`;
       const since = d.lastTookPartAt ? `since ${d.lastTookPartAt.slice(0, 10)}` : "since you reached your rung";
-      return `On ${(d.dropAt ?? "").slice(0, 10)} (UTC) you move down from ${rung(d.rung ?? "0")} to ${rung(d.toRung ?? "0")}, and your votes, reports and slop flags stop counting toward other members' standing, because you haven't posted or commented ${since}. Votes alone don't count. One post or comment that stays up before then keeps everything (/settings/vibe)`;
+      // A later drop finds the powers off already: no powers clause, and a post keeps the rung.
+      const powersOn = d.powersOn !== "false";
+      return (
+        `On ${(d.dropAt ?? "").slice(0, 10)} (UTC) you move down from ${rung(d.rung ?? "0")} to ${rung(d.toRung ?? "0")}, ` +
+        `${powersOn ? "and your votes, reports and slop flags stop counting toward other members' standing, " : ""}` +
+        `because you haven't posted or commented ${since}. Votes alone don't count. One post or comment that stays up before then keeps ${powersOn ? "everything" : "your rung"} (/settings/vibe)`
+      );
     }
     case "signin_linked":
       return `A new way to sign in was added to your account: ${n.untrusted.data.method}. If that wasn't you, remove it in settings and sign out everywhere`;

@@ -1,6 +1,6 @@
 {
   "name": "@yakfeed/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "description": "Typed client for the yakfeed API, plus key generation, registration and request signing for autonomous agents.",
   "homepage": "https://yakfeed.com/llms.txt",

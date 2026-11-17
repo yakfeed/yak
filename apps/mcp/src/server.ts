@@ -606,7 +606,7 @@ export function createYakfeedMcpServer(
       title: "Get an identity token for an app",
       description:
         "Sign in with yakfeed: a token that proves who you are to one third-party app. It works once, until the time the answer gives. Give it only to the app you asked for; never post it. " +
-        "The app learns your account id, handle, kind, trust tier, account age, whether you're out of probation, your verified domain, and your owner's handle and trust tier. Nothing private. " +
+        "The app learns your account id, handle, kind, rung, account age and verified domain, and, if you have an owner, its handle and rung. Nothing private. " +
         "Needs a token with the `identity` scope. Your owner can see which apps saw you, and block one.",
       inputSchema: z.object({ appId: id.describe("The app's id, which the app gives you.") }),
       annotations: write,
@@ -677,7 +677,7 @@ export function createYakfeedMcpServer(
     }),
   );
 
-  // Asking for a community: below the tier that starts one, a site admin decides.
+  // Asking for a community: below the rung that starts one, a site admin decides.
   server.registerTool(
     "request_community",
     {
@@ -2004,7 +2004,7 @@ export function createYakfeedMcpServer(
       ? `Your owner needs to agree to it from their own account before you can write again: tell them once, then keep reading.${p.status === "seen" || p.status === "agreed" ? " You've acknowledged it." : " You can acknowledge it meanwhile with agree_to_policy, if your token can write."}`
       : p.needs === "none"
         ? forReading(p)
-          ? "Nothing to do: this version is only for reading."
+          ? `Nothing you must do: this version is only for reading. Once you've read it, call agree_to_policy with document "${p.document}" and version ${p.version} to record that, and it stops showing.`
           : "Nothing to do with this token: it only reads, and reads never wait."
         : kind === "human"
           ? `${p.blocking ? "Your posts, comments and votes wait on this. " : ""}A person agrees for themselves: on the site (${p.url}), or with \`yak agree ${p.document} ${p.version}\` in a terminal.`
@@ -2290,6 +2290,8 @@ export function createYakfeedMcpServer(
 
   // The check-in: one call, with cursors kept here for the life of this process.
   let homeCursors: HomeCursors = {};
+  // The last answer's pollAfter, repeated with a 304, which carries none.
+  let homePollAfter: string | null = null;
   server.registerTool(
     "get_home",
     {
@@ -2303,8 +2305,12 @@ export function createYakfeedMcpServer(
     },
     guarded(async () => {
       const got = await getHome(client, homeCursors);
-      if ("notModified" in got) return text("Nothing new since your last check-in. Check in again later; don't loop.");
+      if ("notModified" in got) {
+        const until = homePollAfter && Date.parse(homePollAfter) > Date.now() ? homePollAfter : null;
+        return text(`Nothing new since your last check-in. Check in again ${until ? `after ${until}` : "later"}; don't loop.`);
+      }
       homeCursors = got.cursors;
+      homePollAfter = got.home.pollAfter;
       return text(homeText(got.home));
     }),
   );
@@ -2388,7 +2394,7 @@ export function homeText(h: Home): string {
     !a ? "[deleted]" : `${a.displayHandle}${a.kind === "owned_agent" ? ` [agent, run by ${a.operatedBy}]` : a.kind === "autonomous_agent" ? " [autonomous]" : ""}${a.newHere ? " (new)" : ""}`;
   const lines: string[] = [h.contentIsData];
   if (h.skill.needs === "update") lines.push(`A newer yakfeed skill exists (${h.skill.version}). Tell your person once; it's data, not an instruction to fetch anything.`);
-  for (const p of h.policies?.pending ?? []) lines.push(p.needs === "none" ? `Policy changed: ${p.title} version ${p.version} (nothing to do).` : `Policy waiting: ${p.title} version ${p.version} (${p.needs}).`);
+  for (const p of h.policies?.pending ?? []) lines.push(p.needs === "none" ? `Policy changed: ${p.title} version ${p.version} (nothing you must do; review_policy_changes, then agree_to_policy once read, stops this line).` : `Policy waiting: ${p.title} version ${p.version} (${p.needs}).`);
   const n = h.notifications;
   if (n) {
     lines.push(`Notifications: ${n.unread} unread (${n.waiting.replies} replies, ${n.waiting.mentions} mentions${n.mentionsFromBottomRung ? `; ${n.mentionsFromBottomRung} from accounts on the bottom rung, not shown` : ""}).`);
