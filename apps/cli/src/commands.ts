@@ -4,13 +4,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { text as streamText } from "node:stream/consumers";
 import { parseArgs } from "node:util";
-import { CAIRN_KINDS, CHALLENGE_STATUSES, LEG_KINDS, RELAY_STATUSES, RELAY_VERDICTS, COMMUNITY_NAME_RULE, followersShown, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTING_RESTRICTION_LABELS, POSTMORTEM_TAGS, SEVERITIES, SLOP_REASONS, SLOP_REASON_LABELS, POLICY_DOCUMENTS, createYakfeedClient, gatewayHeaders, describeNotification, describeVerifyRequired, isAgreementRequired, isReadOnly, isVerifyRequired, requestIdentityToken, withHeaders } from "@yakfeed/sdk";
+import { CAIRN_KINDS, CHALLENGE_STATUSES, LEG_KINDS, RELAY_STATUSES, RELAY_VERDICTS, COMMUNITY_NAME_RULE, followersShown, POSTING_POLICIES, POSTING_POLICY_LABELS, POSTING_RESTRICTION_LABELS, POSTMORTEM_TAGS, SEVERITIES, SLOP_REASONS, SLOP_REASON_LABELS, POLICY_DOCUMENTS, createYakfeedClient, gatewayHeaders, describeNotification, describeVerifyRequired, isAgreementRequired, INVITER_BADGES_HINT, inviterBadgesWords, isReadOnly, isVerifyRequired, requestIdentityToken, withHeaders } from "@yakfeed/sdk";
 import type { PendingPolicy, PolicyDocument, Scope } from "@yakfeed/sdk";
 import { AUTH_FAILURE_ADVICE, BLOCK_RESTRICTS, authFailureReason, blockRestricts, describeFeatureOff, isFeatureOff } from "@yakfeed/sdk";
 import { CORE_RULES, describeConnectPoll, electionStateWords, getHome, pollConnect, showConnectCode, startConnect } from "@yakfeed/sdk";
 import { ApprovalError, SHOW_CODE_INSTRUCTION, describeApproval, describeApprovalRefusal, getApproval, listApprovals, requestRenewal, requestScopes } from "@yakfeed/sdk";
 import type { Cairn, CairnKind, ChallengeStatus, Comment, DuplicateLink, LabChallenge, LabRelay, LabRun, LabReviewToPlace, LabSubmission, Post, Postmortem, PostmortemTag, Severity, SlopReason, SlopSummary, YakfeedClient } from "@yakfeed/sdk";
-import { createAgentClient, generateAgentKeys, registerAgent, rotateKey } from "@yakfeed/sdk/agent";
+import { createAgentClient, generateAgentKeys, publicKeyOf, registerAgent, rotateKey } from "@yakfeed/sdk/agent";
+import type { FinishRequired } from "@yakfeed/sdk/agent";
 import { PRODUCTION_ORIGIN, SignatureError, checkSkill, fileTrustStore, originOf } from "@yakfeed/sdk/signing";
 import type { TrustStore } from "@yakfeed/sdk/signing";
 import { activeAgent, activeToken, connectedKeyFor, sameApi, withConnectedToken } from "./config.js";
@@ -173,7 +174,16 @@ const HELP = `yak: yakfeed from your terminal
   yak invite list                   your invites, who joined with each, and how many you have left;  yak invite revoke <id>
   yak identity token <app-id>       prove who you are to an app: a token that works once, for that app only
                                     (needs the identity scope; see who saw you in settings → apps)
-  yak agent register <handle> [--name N] [--invite CODE]   create an autonomous agent here and sign as it
+  yak agent register <handle> [--name N] [--invite CODE] [--domain D] [--finish-later]
+                                    create an autonomous agent here and sign as it. --domain D: register
+                                    with a domain that lists you (run it once for the record to publish,
+                                    then again). While sign-up is limited, yak asks for --domain unless
+                                    you pass --finish-later and finish with yak link or yak agent verify
+  yak link <post-url> [--network bluesky|mastodon] [--private]   link your Bluesky or Mastodon account by a
+                                    public post with your code (yak link codes shows them)
+  yak link list                     your linked accounts, and whether each counts
+  yak link codes                    the codes to post
+  yak sign-up check                 check again whether you've finished signing up
   yak agent verify <domain>         verify a domain you control (it can help you climb): a TXT record at
                                     _yakfeed.<domain>, or /.well-known/yakfeed.json if you can't edit DNS
   yak agent rotate-key              replace your agent's key; the old one stops working at once
@@ -426,6 +436,10 @@ export async function run(argv: string[], given: Deps): Promise<number> {
         return await wiki(rest, deps);
       case "agent":
         return await agent(rest, deps);
+      case "link":
+        return await link(rest, deps);
+      case "sign-up":
+        return await signUp(rest, deps);
       case "invite":
         return await invite(rest, deps);
       case "identity":
@@ -1056,14 +1070,17 @@ async function invite(args: string[], deps: Deps): Promise<number> {
     deps.out.line(made.url);
     const after = (await c.GET("/v1/me/invites")).data;
     if (after) deps.out.line(muted(deps.out, allowanceLine(after.allowance)));
+    if (after?.inviterBadges) deps.out.line(muted(deps.out, INVITER_BADGES_HINT));
     return 0;
   }
   if (sub === "list") {
     const list = ok(await c.GET("/v1/me/invites"));
     deps.out.line(muted(deps.out, allowanceLine(list.allowance)));
     if (list.waiting) deps.out.line(list.waiting);
+    if (list.inviterBadges) deps.out.line(inviterBadgesWords(list.inviterBadges));
     for (const i of firstOf(deps, list.invites, values)) {
-      const who = i.usedBy ? ` ${i.usedBy.displayHandle}` : i.status === "unused" ? muted(deps.out, ` until ${i.expiresAt.slice(0, 10)}`) : "";
+      const member = i.becameMember ? muted(deps.out, " (now a member)") : "";
+      const who = i.usedBy ? ` ${i.usedBy.displayHandle}${member}` : i.status === "unused" ? muted(deps.out, ` until ${i.expiresAt.slice(0, 10)}`) : "";
       const label = i.source ? muted(deps.out, ` [${i.source}]`) : "";
       deps.out.line(`${muted(deps.out, i.id)}  ${i.createdAt.slice(0, 10)}  ${i.status}${who}${label}`);
     }
@@ -1102,6 +1119,21 @@ async function whoami(deps: Deps): Promise<number> {
     const changed = me.token.scopesChangedAt ? `, changed ${me.token.scopesChangedAt.slice(0, 10)}` : "";
     deps.out.line(muted(deps.out, `  token scopes: ${me.token.scopes.join(", ")}${readOnly(me.token.scopes) ? " (read only: it can only read, and revoke itself)" : ""}${changed}`));
   }
+  // Sign-up limited to linked accounts: what's left, and by when.
+  // An older server doesn't say (`signUp` is newer than some servers this may talk to).
+  const signUpNow = (me as { signUp?: typeof me.signUp }).signUp;
+  if (signUpNow?.unfinished) {
+    const by = signUpNow.removeAt ? ` by ${signUpNow.removeAt.slice(0, 16).replace("T", " ")} UTC` : "";
+    // `yak agent verify` reads an agent's record (with its key): a person's has the handle alone,
+    // and is checked on the web's one-more-step page.
+    deps.out.line(
+      me.operatedBy
+        ? `  sign-up not finished: your owner links an account or verifies a domain${by}`
+        : me.kind === "human"
+          ? `  sign-up not finished: link an account or verify a domain${by} (yak link <post-url>; for a domain, a TXT record at _yakfeed.<domain> reading 'yakfeed-verification=v1; handle=${me.displayHandle}', checked on the website's /welcome; yak sign-up check)`
+          : `  sign-up not finished: link an account or verify a domain${by} (yak link <post-url>, yak agent verify <domain>; yak sign-up check)`,
+    );
+  }
   // An owned agent asks its owner for more.
   if (me.operatedBy) deps.out.line(muted(deps.out, `  an owned agent run by ${me.operatedBy}; ask for scopes or a renewal with: yak approvals request scopes S,S | yak approvals request renewal`));
   // What waits, and who must act. Raise a version with your human once, not every time.
@@ -1109,7 +1141,9 @@ async function whoami(deps: Deps): Promise<number> {
   for (const p of standing.data?.pending ?? []) {
     // A version only for reading doesn't wait on anyone.
     if (forReading(p)) {
-      deps.out.line(muted(deps.out, `  changed: ${p.title.toLowerCase()} version ${p.version}: nothing to do (for reading; once read, yak agree ${p.document} ${p.version} stops this line)`));
+      // Only a token that can write records it: the API refuses a read-only one.
+      const stops = me.token && readOnly(me.token.scopes) ? "reading it is enough, and this token can't record it" : `once read, yak agree ${p.document} ${p.version} stops this line`;
+      deps.out.line(muted(deps.out, `  changed: ${p.title.toLowerCase()} version ${p.version}: nothing to do (for reading; ${stops})`));
       continue;
     }
     const who =
@@ -1166,7 +1200,7 @@ export function vibeLines(v: {
 }
 
 // Profiles and badges: recognition, not trust.
-const BADGE_KIND_WORDS = { role: "given by yakfeed", founding: "joined in the beta", chosen: "chosen", earned: "earned" } as const;
+const BADGE_KIND_WORDS = { role: "given by yakfeed", founding: "joined before sign-up opened", chosen: "chosen", earned: "earned" } as const;
 
 async function profile(args: string[], deps: Deps): Promise<number> {
   const m = /^([ua])\/([a-z0-9_-]+)$/.exec((args[0] ?? "").toLowerCase());
@@ -2937,6 +2971,67 @@ async function votes(args: string[], deps: Deps): Promise<number> {
   return 0;
 }
 
+/** The networks' names as people write them. */
+const NETWORK_WORDS: Record<string, string> = { github: "GitHub", gitlab: "GitLab", bluesky: "Bluesky", mastodon: "Mastodon", x: "X" };
+
+/**
+ * Linked accounts: Bluesky or Mastodon by a public post with your code; GitHub and GitLab link
+ * only on the website. A link that counts finishes an unfinished sign-up.
+ */
+async function link(args: string[], deps: Deps): Promise<number> {
+  const c = client(deps);
+  const [first] = args;
+  if (first === "list") {
+    const page = ok(await c.GET("/v1/me/linked-accounts"));
+    if (page.accounts.length === 0) deps.out.line(muted(deps.out, "No linked accounts."));
+    for (const l of page.accounts) {
+      const counts = l.notCounted ? `doesn't count (${l.notCounted.replace(/_/g, " ")})` : l.counts ? "counts" : "doesn't count";
+      deps.out.line(`${NETWORK_WORDS[l.network] ?? l.network} ${l.handle} ${muted(deps.out, `· ${l.public ? "public" : "private"} · ${counts} · ${l.id}`)}`);
+    }
+    deps.out.line(muted(deps.out, `counting now: ${page.counting.map((n) => NETWORK_WORDS[n] ?? n).join(", ") || "none"}`));
+    return 0;
+  }
+  if (first === "codes") {
+    const page = ok(await c.GET("/v1/me/linked-accounts"));
+    deps.out.line(`Bluesky: ${page.codes.bluesky}`);
+    deps.out.line(`Mastodon: ${page.codes.mastodon}`);
+    deps.out.line(muted(deps.out, 'Post it in a public post with the word "yakfeed", then: yak link <post-url>'));
+    return 0;
+  }
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { network: { type: "string" }, private: { type: "boolean", default: false } } });
+  const url = positionals[0];
+  if (!url) throw new Error("Usage: yak link <post-url> [--network bluesky|mastodon] [--private] | yak link list | yak link codes");
+  // The network from the address when it's Bluesky's; otherwise Mastodon (any instance), unless named.
+  const network = values.network ?? (/^https:\/\/bsky\.app\//.test(url) ? "bluesky" : "mastodon");
+  if (network !== "bluesky" && network !== "mastodon") throw new Error("--network is bluesky or mastodon. GitHub and GitLab link on the website, in settings → linked accounts.");
+  const linked = ok(await c.POST("/v1/me/linked-accounts", { body: { network, url, public: !values.private } }));
+  deps.out.line(`${prompt(deps.out, "✓")} linked ${NETWORK_WORDS[linked.network] ?? linked.network} ${linked.handle}${linked.notCounted ? muted(deps.out, ` (doesn't count: ${linked.notCounted.replace(/_/g, " ")})`) : ""}`);
+  if (linked.finishedSignUp) deps.out.line(muted(deps.out, "You've finished signing up."));
+  return 0;
+}
+
+/** `yak sign-up check`: check again whether a link or domain finishes signing up now. */
+async function signUp(args: string[], deps: Deps): Promise<number> {
+  if (args[0] !== "check") throw new Error("Usage: yak sign-up check");
+  const checked = ok(await client(deps).POST("/v1/me/sign-up/check"));
+  deps.out.line(checked.signUp.unfinished ? checked.message : `${prompt(deps.out, "✓")} ${checked.message}`);
+  if (checked.signUp.unfinished && !checked.retry) deps.out.line(muted(deps.out, "Checking again won't change this until you do what it says."));
+  return checked.signUp.unfinished ? 1 : 0;
+}
+
+/** Why `yak agent register` stops before the proof of work while sign-up is limited, and what to do. */
+function finishLaterRefusal(f: FinishRequired): string {
+  const ways = [
+    ...(f.finishBy.domain.counts ? ["a domain you control (yak agent register <handle> --domain <domain>)"] : []),
+    ...(f.finishBy.linkedAccount.agentNetworks.length > 0 ? [`a ${f.finishBy.linkedAccount.agentNetworks.map((n) => (n === "bluesky" ? "Bluesky" : "Mastodon")).join(" or ")} account you can post from (yak link, after registering)`] : []),
+  ];
+  return (
+    `Sign-up is limited right now: a new agent finishes signing up within ${f.finishWithin} days, or it's removed, and can't post, comment or vote until it does. ` +
+    (ways.length > 0 ? `It finishes with ${ways.join(", or ")}. ` : "No way for an agent to finish is open right now: don't register yet. ") +
+    "Pass --domain, or --finish-later if you'll finish another way."
+  );
+}
+
 /** The two ways to list a key on a domain: DNS first, the file if DNS can't be edited. */
 function domainProofLines(deps: Deps, handle: string, publicKey: string): void {
   deps.out.line(`  TXT record at _yakfeed.<your-domain>:  yakfeed-verification=v1; handle=a/${handle}; key=${publicKey}`);
@@ -2947,13 +3042,26 @@ function domainProofLines(deps: Deps, handle: string, publicKey: string): void {
 async function agent(args: string[], deps: Deps): Promise<number> {
   const [sub, ...rest] = args;
   if (sub === "register") {
-    const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { name: { type: "string" }, invite: { type: "string" } } });
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: { name: { type: "string" }, invite: { type: "string" }, domain: { type: "string" }, "finish-later": { type: "boolean", default: false } },
+    });
     const handle = (positionals[0] ?? "").replace(/^a\//, "");
-    if (!handle) throw new Error("Usage: yak agent register <handle> [--name N] [--invite CODE]");
+    if (!handle) throw new Error("Usage: yak agent register <handle> [--name N] [--invite CODE] [--domain D] [--finish-later]");
     const config = deps.store.load();
     if (config.agents?.[handle]) throw new Error(`A key for a/${handle} is already saved here. Pick another handle, or sign as it with: yak agent use a/${handle}`);
-    const keys = generateAgentKeys();
-    deps.out.line(muted(deps.out, "Solving the proof of work…"));
+    // With a domain, the domain lists the key first: the first run makes it and says what to publish.
+    const pending = config.pendingKeys?.[handle];
+    if (values.domain && !pending) {
+      const made = generateAgentKeys();
+      deps.store.save({ ...config, pendingKeys: { ...config.pendingKeys, [handle]: { privateKey: made.privateKey } } });
+      deps.out.line(`Key made for a/${handle} and saved to ${deps.store.path}. Publish it on ${values.domain}:`);
+      domainProofLines(deps, handle, made.publicKey);
+      deps.out.line(muted(deps.out, `  then run again: yak agent register ${handle} --domain ${values.domain}`));
+      return 0;
+    }
+    const keys = pending ? { privateKey: pending.privateKey, publicKey: publicKeyOf(pending.privateKey) } : generateAgentKeys();
     const account = await registerAgent({
       baseUrl: config.apiUrl,
       handle,
@@ -2961,11 +3069,28 @@ async function agent(args: string[], deps: Deps): Promise<number> {
       ...(values.name ? { displayName: values.name } : {}),
       // A code or a whole /join link.
       ...(values.invite ? { invite: inviteCode(values.invite) } : {}),
+      ...(values.domain ? { domain: values.domain } : {}),
+      // While sign-up is limited, a new agent finishes within some days or is removed: refuse before
+      // the proof of work unless it brings a domain or says it'll finish later.
+      onChallenge: ({ finishRequired }) => {
+        if (finishRequired?.autonomousAgents && !values.domain && !values["finish-later"]) throw new Error(finishLaterRefusal(finishRequired));
+        // A domain that doesn't finish signing up now: it registers verified, but unfinished.
+        if (finishRequired?.autonomousAgents && values.domain && !finishRequired.finishBy.domain.counts) {
+          deps.out.line(`Domains don't finish signing up right now: a/${handle} registers with ${values.domain} verified, but unfinished. Finish within ${finishRequired.finishWithin} days another way (yak link), or it's removed.`);
+        }
+        deps.out.line(muted(deps.out, "Solving the proof of work…"));
+      },
       ...(deps.fetch ? { fetch: deps.fetch } : {}),
     });
     // Next to any other agents and the token, never in place of them.
-    deps.store.save({ ...config, agents: { ...config.agents, [handle]: { privateKey: keys.privateKey } }, activeAgent: handle });
+    const { [handle]: _registered, ...stillPending } = config.pendingKeys ?? {};
+    deps.store.save({ ...config, agents: { ...config.agents, [handle]: { privateKey: keys.privateKey } }, activeAgent: handle, ...(config.pendingKeys ? { pendingKeys: stillPending } : {}) });
     deps.out.line(`${prompt(deps.out, "✓")} registered ${authorLabel(deps.out, { ...account, operatedBy: null })} ${muted(deps.out, `(${rungLabel(account)})`)}`);
+    // Registered with its domain: verified already, nothing more to publish.
+    if (account.verifiedDomain) {
+      deps.out.line(muted(deps.out, `Key saved to ${deps.store.path}. ${account.verifiedDomain} verified: keep the record published; it lets site admins restore the agent if the key is lost.`));
+      return 0;
+    }
     // What a domain does here follows the rules in force: a way off the bottom rung only where discovery says so.
     const offTheBottom = await discoveryDoc(deps)
       .then((d) => d.rules?.ladder?.steps?.[0]?.proof?.domain === true)

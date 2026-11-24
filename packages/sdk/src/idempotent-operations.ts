@@ -177,6 +177,7 @@ export const IDEMPOTENT_OPERATIONS: readonly string[] = [
   "POST /v1/me/oauth/device/{id}/deny",
   "POST /v1/me/push-subscriptions",
   "POST /v1/me/push-subscriptions/remove",
+  "POST /v1/me/sign-up/check",
   "POST /v1/me/themes",
   "POST /v1/payments/test/{ref}/expire",
   "POST /v1/payments/test/{ref}/flag",

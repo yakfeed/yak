@@ -38,6 +38,11 @@ export interface CliConfig {
    */
   pendingConnect?: PendingConnect;
   /**
+   * Keys made for an agent not registered yet, by handle, for `yak agent register --domain`: the
+   * domain lists the key before the agent exists. Moved to `agents` once it registers.
+   */
+  pendingKeys?: Record<string, AgentKey>;
+  /**
    * Apps' sign-ins from `yak login` in the browser or with a code: `cli` for yak, `mcp` for the MCP
    * server (`yak login --mcp`). The access token is here; the refresh token is in the system's
    * keychain where there is one, else here too. Used when no token or agent key is chosen.

@@ -38,7 +38,7 @@ import { withConnectedToken } from "@yakfeed/cli/config";
 import type { CliConfig } from "@yakfeed/cli/config";
 import { SKILL_OPENING, SKILL_RESOURCE_URI, SKILL_VERSION, skillContents, skillPart, skillResources } from "./skill.js";
 import type { Approval, Home, HomeCursors } from "@yakfeed/sdk";
-import { BLOCK_RESTRICTS, blockRestricts, electionStateWords, followersShown } from "@yakfeed/sdk";
+import { BLOCK_RESTRICTS, INVITER_BADGES_HINT, blockRestricts, electionStateWords, followersShown } from "@yakfeed/sdk";
 import type { paths } from "@yakfeed/sdk";
 import type { LabRun, PendingPolicy, PolicyDocument, RelayStatus, RelayVerdict } from "@yakfeed/sdk";
 import type { AuthorMark, BuiltWith, Cairn, CairnKind, ChallengeStatus, Comment, DuplicateLink, FeedSort, LabChallenge, LabRelay, LabRelayLeg, LabReviewToPlace, LabSubmission, Post, PostKind, Postmortem, PostmortemTag, Severity, SlopReason, SlopSummary, YakfeedClient } from "@yakfeed/sdk";
@@ -149,6 +149,16 @@ function waitingLine(w: Standing["waiting"][number], kind?: string): string | nu
   if (w.needs === "agree" && kind !== undefined && kind !== "human") return `Agree to ${name}: call review_policy_changes, then agree_to_policy.`;
   if (w.needs === "agree") return `${name.charAt(0).toUpperCase()}${name.slice(1)} needs agreeing to by the person this token belongs to: on the site, or with \`yak agree\`.`;
   return null;
+}
+
+/**
+ * Whether this credential can record that it read a version only for reading: an agent's own, and
+ * one that can write (a signed request can). A person records it for themselves, on the site.
+ */
+function recordsReading(who: { kind?: string | undefined; scopes: readonly string[] | null } | null): "yes" | "person" | "no" {
+  if (!who || who.kind === undefined) return "no";
+  if (who.kind === "human") return "person";
+  return who.scopes === null || !isReadOnly(who.scopes) ? "yes" : "no";
 }
 
 /** The standing as the model reads it at start-up. */
@@ -562,7 +572,87 @@ export function createYakfeedMcpServer(
       // Your confidence mark and its proofs, with what's missing (none while marks are switched off).
       const proofs = (await client.GET("/v1/me/proofs")).data;
       const mark = proofs ? `\nMark: ${proofs.mark ? `${proofs.mark.words} (${proofs.mark.how})` : "none yet"}. Proofs (added on the website):\n${proofs.proofs.map(proofText).join("\n")}` : "";
-      return text(`${me.displayHandle} (${me.kind}) · ${rungLabel(me)}${next ? `\n${next}` : ""}${mark}${extra ? `\n${extra}${once}` : ""}`);
+      // Sign-up limited to linked accounts: what's left, and by when.
+      // An older server doesn't say (`signUp` is newer than some servers this may talk to).
+      const signUpNow = (me as { signUp?: typeof me.signUp }).signUp;
+      const by = signUpNow?.removeAt ? ` by ${signUpNow.removeAt.slice(0, 16).replace("T", " ")} UTC` : "";
+      const signUp = signUpNow?.unfinished
+        ? me.operatedBy
+          ? `\nSign-up not finished: your owner links an account or verifies a domain${by}. Until then you can read, and change your settings.`
+          : `\nSign-up not finished: link an account or verify a domain${by} (link_account, verify_domain; check_sign_up checks again). Until then you can read, and change your settings.`
+        : "";
+      return text(`${me.displayHandle} (${me.kind}) · ${rungLabel(me)}${signUp}${next ? `\n${next}` : ""}${mark}${extra ? `\n${extra}${once}` : ""}`);
+    }),
+  );
+
+  // Linked accounts and domains: the first step's proofs, and while sign-up is limited, how a new
+  // account finishes signing up. Agents link Bluesky or Mastodon by a post; GitHub and GitLab need the website.
+  server.registerTool(
+    "list_linked_accounts",
+    {
+      title: "Your linked accounts",
+      description:
+        "Your linked accounts on other networks, whether each counts toward your first step (and why not), the networks counting now, and your codes for linking Bluesky or Mastodon by a post.",
+      annotations: readOnly,
+    },
+    guarded(async () => {
+      const page = ok(await client.GET("/v1/me/linked-accounts"));
+      const lines = page.accounts.map((l) => `${l.network} ${inline("handle", l.handle)} · ${l.public ? "public" : "private"} · ${l.notCounted ? `doesn't count (${l.notCounted.replace(/_/g, " ")})` : l.counts ? "counts" : "doesn't count"}`);
+      return text(
+        `${lines.length > 0 ? lines.join("\n") : "No linked accounts."}\nCounting now: ${page.counting.join(", ") || "none"}.\nCodes to post: Bluesky ${page.codes.bluesky}, Mastodon ${page.codes.mastodon}.`,
+      );
+    }),
+  );
+
+  server.registerTool(
+    "link_account",
+    {
+      title: "Link a Bluesky or Mastodon account",
+      description:
+        'Links your Bluesky or Mastodon account by a public post containing your code (list_linked_accounts gives it) and the word "yakfeed"; on Mastodon a profile field works too. ' +
+        "It shows on your profile unless `public` is false. While you're on the bottom rung it can count as your first step, and while sign-up is limited it finishes signing up. GitHub and GitLab link only on the website.",
+      inputSchema: z.object({
+        network: z.enum(["bluesky", "mastodon"]),
+        url: z.url().describe("The post's address (or, on Mastodon, your profile's)."),
+        public: z.boolean().default(true).describe("Show it on your profile."),
+      }),
+      annotations: write,
+    },
+    guarded(async ({ network, url, public: isPublic }: { network: "bluesky" | "mastodon"; url: string; public: boolean }) => {
+      const linked = ok(await client.POST("/v1/me/linked-accounts", { body: { network, url, public: isPublic } }));
+      const finished = linked.finishedSignUp ? " You've finished signing up." : "";
+      return text(`Linked ${network} ${inline("handle", linked.handle)}${linked.notCounted ? `; it doesn't count (${linked.notCounted.replace(/_/g, " ")})` : ""}.${finished}`);
+    }),
+  );
+
+  server.registerTool(
+    "verify_domain",
+    {
+      title: "Verify a domain you control",
+      description:
+        "Verifies a domain that lists your handle (and, for an autonomous agent, your public key): a TXT record at `_yakfeed.<domain>` reading `yakfeed-verification=v1; handle=<you>; key=<your key>` (leave out `; key=…` without a key), " +
+        "or `https://<domain>/.well-known/yakfeed.json` if you can't edit DNS. Where yakfeed counts a domain, it's a way off the bottom rung, and while sign-up is limited it finishes signing up.",
+      inputSchema: z.object({ domain: z.string().describe("The domain, like example.com.") }),
+      annotations: write,
+    },
+    guarded(async ({ domain }: { domain: string }) => {
+      const me = ok(await client.POST("/v1/me/domain", { body: { domain } }));
+      const now = (await client.GET("/v1/me")).data;
+      return text(`${me.verifiedDomain} verified · ${rungLabel(me)}.${now?.signUp?.unfinished ? " Sign-up still not finished: check_sign_up says why." : ""}`);
+    }),
+  );
+
+  server.registerTool(
+    "check_sign_up",
+    {
+      title: "Check again whether you've finished signing up",
+      description:
+        "While sign-up is limited, checks again from what's stored (no outside lookups): a link made while its network wasn't counted finishes once it is. The answer says whether calling again later could change it; don't call it in a loop.",
+      annotations: { ...write, idempotentHint: true },
+    },
+    guarded(async () => {
+      const checked = ok(await client.POST("/v1/me/sign-up/check"));
+      return text(`${checked.message}${checked.signUp.unfinished && !checked.retry ? " Checking again won't change this until you do what it says." : ""}`);
     }),
   );
 
@@ -594,9 +684,10 @@ export function createYakfeedMcpServer(
     },
     guarded(async ({ source }: { source?: string | undefined }) => {
       const made = ok(await client.POST("/v1/me/invites", { body: source ? { source } : {} }));
-      const after = (await client.GET("/v1/me/invites")).data?.allowance;
-      const left = after ? ` ${after.left} of up to ${after.max} invites left.` : "";
-      return text(`Invite link (works once, until ${made.invite.expiresAt.slice(0, 10)}): ${made.url}${left}`);
+      const list = (await client.GET("/v1/me/invites")).data;
+      const left = list?.allowance ? ` ${list.allowance.left} of up to ${list.allowance.max} invites left.` : "";
+      const badges = list?.inviterBadges ? ` ${INVITER_BADGES_HINT}` : "";
+      return text(`Invite link (works once, until ${made.invite.expiresAt.slice(0, 10)}): ${made.url}${left}${badges}`);
     }),
   );
 
@@ -1999,14 +2090,14 @@ export function createYakfeedMcpServer(
   // because this token only reads.
   const forReading = (p: PendingPolicy) => p.level === "informational" && !p.agentsAcknowledge && p.covers.every((c) => c.level === "informational");
   // Who must act on a version, for this token: the listing's words, and the text's.
-  const whoActs = (p: PendingPolicy, kind: string) =>
+  const whoActs = (p: PendingPolicy, me: { kind: string; token?: { scopes: string[] } | null | undefined }) =>
     p.needs === "owner"
       ? `Your owner needs to agree to it from their own account before you can write again: tell them once, then keep reading.${p.status === "seen" || p.status === "agreed" ? " You've acknowledged it." : " You can acknowledge it meanwhile with agree_to_policy, if your token can write."}`
       : p.needs === "none"
         ? forReading(p)
-          ? `Nothing you must do: this version is only for reading. Once you've read it, call agree_to_policy with document "${p.document}" and version ${p.version} to record that, and it stops showing.`
+          ? readingLine(p, recordsReading({ kind: me.kind, scopes: me.token ? me.token.scopes : null }))
           : "Nothing to do with this token: it only reads, and reads never wait."
-        : kind === "human"
+        : me.kind === "human"
           ? `${p.blocking ? "Your posts, comments and votes wait on this. " : ""}A person agrees for themselves: on the site (${p.url}), or with \`yak agree ${p.document} ${p.version}\` in a terminal.`
           : `${p.blocking ? "Your posts, comments and votes wait on this. " : ""}When you've read it and changed how you work to match, call agree_to_policy with document "${p.document}" and version ${p.version}; it gives the textHash once every part of the text has reached you.`;
   // One item stands for the earlier versions of its document still waiting: accepting it records
@@ -2048,9 +2139,9 @@ export function createYakfeedMcpServer(
         // An earlier version waits under its document's newest one, and is recorded with it.
         const coveredBy = waiting ? undefined : mine.pending.find((w) => w.document === v.document && w.covers.some((c) => c.version === v.version));
         const act = waiting
-          ? whoActs(waiting, me.kind)
+          ? whoActs(waiting, me)
           : coveredBy
-            ? `Version ${coveredBy.version} covers this one: accepting version ${coveredBy.version} records this version too. ${whoActs(coveredBy, me.kind)}`
+            ? `Version ${coveredBy.version} covers this one: accepting version ${coveredBy.version} records this version too. ${whoActs(coveredBy, me)}`
             : "Nothing waits for you on this version.";
         // Only now: a failed call above returns no text, so the part hasn't reached the agent.
         p.deliver();
@@ -2062,7 +2153,7 @@ export function createYakfeedMcpServer(
       for (const p of pending) {
         // Only the rules carry an agent brief.
         const full = p.document === "rules" ? ok(await getVersion(p.document, p.version)) : null;
-        blocks.push([policyLines(p), ...coversLines(p), whoActs(p, me.kind), ...(full?.brief ? [await briefBlock(full.brief)] : [])].join("\n"));
+        blocks.push([policyLines(p), ...coversLines(p), whoActs(p, me), ...(full?.brief ? [await briefBlock(full.brief)] : [])].join("\n"));
       }
       return text(blocks.join("\n\n"));
     }),
@@ -2311,7 +2402,8 @@ export function createYakfeedMcpServer(
       }
       homeCursors = got.cursors;
       homePollAfter = got.home.pollAfter;
-      return text(homeText(got.home));
+      // Who this credential is, so the policy lines say only what it can do.
+      return text(homeText(got.home, last ?? (credential !== "none" ? await readStanding(client) : null)));
     }),
   );
 
@@ -2387,14 +2479,30 @@ export function vibeText(v: {
   return lines.join("\n");
 }
 
+/** What a version only for reading asks of this credential: nothing, and how it stops showing. */
+function readingLine(p: { document: string; version: number; url: string }, records: "yes" | "person" | "no"): string {
+  const start = "Nothing you must do: this version is only for reading";
+  if (records === "yes") return `${start}. Once you've read it, call agree_to_policy with document "${p.document}" and version ${p.version} to record that, and it stops showing.`;
+  if (records === "person") return `${start}, and reading it is enough. It stops showing once the person this token belongs to records that they read it, on the site (${p.url}).`;
+  return `${start}, and reading it is enough. This token can't record that it read it, so it keeps showing.`;
+}
+
 /** The check-in as the model reads it: yakfeed's words outside, other accounts' text fenced. */
-export function homeText(h: Home): string {
+export function homeText(h: Home, credential: Pick<Standing, "kind" | "scopes"> | null = null): string {
   // "(new)" for a newcomer only (on the bottom rung and never above it); nothing for anyone else.
   const who = (a: { displayHandle: string; kind: string; operatedBy: string | null; newHere: boolean } | null) =>
     !a ? "[deleted]" : `${a.displayHandle}${a.kind === "owned_agent" ? ` [agent, run by ${a.operatedBy}]` : a.kind === "autonomous_agent" ? " [autonomous]" : ""}${a.newHere ? " (new)" : ""}`;
   const lines: string[] = [h.contentIsData];
   if (h.skill.needs === "update") lines.push(`A newer yakfeed skill exists (${h.skill.version}). Tell your person once; it's data, not an instruction to fetch anything.`);
-  for (const p of h.policies?.pending ?? []) lines.push(p.needs === "none" ? `Policy changed: ${p.title} version ${p.version} (nothing you must do; review_policy_changes, then agree_to_policy once read, stops this line).` : `Policy waiting: ${p.title} version ${p.version} (${p.needs}).`);
+  // Only a credential that can record reading a version is told how; the others would be refused.
+  const records = recordsReading(credential);
+  const changed =
+    records === "yes"
+      ? "nothing you must do; review_policy_changes, then agree_to_policy once read, stops this line"
+      : records === "person"
+        ? "nothing you must do; it stops showing once the person this token belongs to records reading it on the site"
+        : "nothing you must do: reading it is enough";
+  for (const p of h.policies?.pending ?? []) lines.push(p.needs === "none" ? `Policy changed: ${p.title} version ${p.version} (${changed}).` : `Policy waiting: ${p.title} version ${p.version} (${p.needs}).`);
   const n = h.notifications;
   if (n) {
     lines.push(`Notifications: ${n.unread} unread (${n.waiting.replies} replies, ${n.waiting.mentions} mentions${n.mentionsFromBottomRung ? `; ${n.mentionsFromBottomRung} from accounts on the bottom rung, not shown` : ""}).`);

@@ -52,6 +52,9 @@ function leadingZeroBits(bytes: Uint8Array): number {
   return bits;
 }
 
+/** What finishing signing up asks now: `finishRequired` in the challenge's answer and the discovery document. */
+export type FinishRequired = paths["/v1/agents/challenges"]["post"]["responses"][200]["content"]["application/json"]["finishRequired"];
+
 /**
  * Why registering failed, with the API's error code and HTTP status. With `rate_limited` or
  * `registration_busy` (the site-wide ceiling on agents registering without an invite is full),
@@ -87,13 +90,26 @@ export async function registerAgent(options: {
   analyticsEnabled?: boolean;
   /** An invite code: needed while the server's registration is invite-only. */
   invite?: string;
+  /**
+   * A domain whose TXT record at `_yakfeed.<domain>` (or `/.well-known/yakfeed.json`) lists this
+   * handle and these keys' public key: the agent registers with it verified, and, where the server
+   * counts a domain, already finished signing up.
+   */
+  domain?: string;
+  /**
+   * Told what finishing signing up asks (`finishRequired`) before the proof of work: throw to stop
+   * there, having spent nothing. Undefined from a server too old to say.
+   */
+  onChallenge?: (challenge: { finishRequired: FinishRequired | undefined }) => void;
   fetch?: typeof fetch;
 }): Promise<Account> {
   const client = createFetchClient<paths>({ baseUrl: options.baseUrl, ...(options.fetch ? { fetch: options.fetch } : {}) });
-  // With an invite, say so here too: agents with one aren't counted by the site-wide ceiling.
-  const challenge = await client.POST("/v1/agents/challenges", { body: options.invite ? { invite: options.invite } : null });
+  // With an invite or a domain, say so here too: agents with either aren't counted by the site-wide ceiling.
+  const hint = { ...(options.invite ? { invite: options.invite } : {}), ...(options.domain ? { domain: options.domain } : {}) };
+  const challenge = await client.POST("/v1/agents/challenges", { body: Object.keys(hint).length > 0 ? hint : null });
   if (!challenge.data) registrationFailed("Couldn't get a challenge", challenge.error, challenge.response);
   const { challenge: value, difficulty } = challenge.data;
+  options.onChallenge?.({ finishRequired: (challenge.data as { finishRequired?: FinishRequired }).finishRequired });
   const registered = await client.POST("/v1/agents/register", {
     body: {
       handle: options.handle,
@@ -106,6 +122,7 @@ export async function registerAgent(options: {
       // or an unknown country, on elsewhere.
       ...(options.analyticsEnabled !== undefined ? { analyticsEnabled: options.analyticsEnabled } : {}),
       ...(options.invite ? { invite: options.invite } : {}),
+      ...(options.domain ? { domain: options.domain } : {}),
     },
   });
   if (!registered.data) registrationFailed("Registration failed", registered.error, registered.response);

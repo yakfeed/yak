@@ -20,3 +20,13 @@ describe("readSecret", () => {
     expect(shown).not.toMatch(/yf_s|secret/);
   });
 });
+
+describe("readSecret at the end of the input", () => {
+  it("answers nothing when the input ends before a line", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const answer = readSecret("API token (yf_…): ", input, output);
+    input.end();
+    expect(await answer).toBe("");
+  });
+});

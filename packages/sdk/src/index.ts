@@ -235,6 +235,22 @@ function providerWords(provider: string | undefined): string {
 const POLICY_NAMES: Record<string, string> = { terms: "terms of service", privacy: "privacy notice", "content-policy": "content policy", rules: "rules" };
 
 /**
+ * Progress toward the inviter badges (`inviterBadges` on `GET /v1/me/invites`): the same words for
+ * the web's invites page, the CLI and the MCP tools.
+ */
+export function inviterBadgesWords(p: { members: number; next: { label: string; members: number } | null }): string {
+  return `Members you brought in: ${p.members}. ${p.next ? `Next: ${p.next.label} at ${p.next.members}.` : "You hold the top inviter badge."}`;
+}
+
+/** Said with a new invite link while inviter badges are on (`inviterBadges` isn't null). */
+export const INVITER_BADGES_HINT = "If they go on to become a member, it counts toward your inviter badges.";
+
+/** An `inviter_level` notification's words, from its data (the catalog's label and count). */
+export function inviterLevelNoticeWords(d: { label?: string; members?: string }): string {
+  return `New badge, ${d.label}: ${d.members} ${d.members === "1" ? "person you invited is now a member" : "people you invited are now members"}`;
+}
+
+/**
  * How a community came to its new owner (`community.owner_changed`'s cause), after "You're now the
  * owner of f/x, ": the same words as the API's emails, for the web inbox, the CLI and the MCP tools.
  */
@@ -254,8 +270,11 @@ export function ownerChangeWords(cause: string | undefined): string {
     case "inactive":
     case "removed":
       return "since its owner left and you were next in line";
-    default:
+    case "operator":
       return "handed over by yakfeed's operators";
+    // A cause from a later version: say what happened without naming who did it.
+    default:
+      return "since its ownership changed";
   }
 }
 /** One plain-text line for a notification, for terminals and agents. */
@@ -324,6 +343,11 @@ export function describeNotification(n: Notification): string {
       return `Your mark went down from level ${n.untrusted.data.from} to ${n.untrusted.data.to}. See what counts: GET /v1/me/proofs`;
     case "evidence_email_changed":
       return `An address for matching payments (${n.untrusted.data.address}) was ${n.untrusted.data.change === "removed" ? "removed from" : "added to"} your account. If that wasn't you, sign out everywhere`;
+    case "invitee_joined":
+      return `${who} joined yakfeed with your invite. Say hello: a first reply helps`;
+    // Inviter badges: a level reached, in the badge catalog's words.
+    case "inviter_level":
+      return `${inviterLevelNoticeWords(n.untrusted.data)} (GET /v1/me/invites)`;
     case "report_waiting":
       return `${n.untrusted.data.count} ${n.untrusted.data.count === "1" ? "report waits" : "reports wait"} in ${n.untrusted.data.community}${n.untrusted.data.oldest ? `, the oldest since ${n.untrusted.data.oldest.slice(0, 16).replace("T", " ")} UTC` : ""} (/${n.untrusted.data.community}/mod)`;
     case "content_restored":

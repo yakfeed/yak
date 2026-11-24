@@ -78,7 +78,9 @@ describe("describeNotification", () => {
     expect(changed("voided")).toMatch(/, as next in line, since site admins voided its election\./);
     expect(changed("inactive")).toMatch(/, since its owner left and you were next in line\./);
     expect(changed("handover")).toMatch(/, handed over to you\./);
-    expect(changed()).toMatch(/, handed over by yakfeed's operators\./);
+    expect(changed("operator")).toMatch(/, handed over by yakfeed's operators\./);
+    // A cause from a later version names nobody.
+    expect(changed()).toMatch(/, since its ownership changed\./);
   });
 
   it("names the agent that changed its party's ballot by the display handle it was sent", () => {

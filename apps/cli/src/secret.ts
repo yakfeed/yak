@@ -10,10 +10,12 @@ export function readSecret(question: string, input: NodeJS.ReadableStream = proc
     const rl = createInterface({ input, output, terminal: true });
     (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = () => {};
     output.write(question);
+    // The input ending first (Ctrl-D) answers nothing; after an answer, resolving again changes nothing.
+    rl.on("close", () => resolve(""));
     rl.question("", (answer) => {
+      resolve(answer);
       rl.close();
       output.write("\n");
-      resolve(answer);
     });
   });
 }
